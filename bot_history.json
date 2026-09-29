@@ -2,8 +2,8 @@
   "macro_daily": [
     {
       "date": "2026-09-29",
-      "vnindex_price": 1782.2,
-      "vnindex_rsi": 45.9,
+      "vnindex_price": 1774.18,
+      "vnindex_rsi": 43.8,
       "vnindex_trend": "giam",
       "breadth_up": 17,
       "breadth_down": 44,
@@ -1597,7 +1597,7 @@
     }
   ],
   "_meta": {
-    "last_updated": "2026-09-29T09:25:31",
+    "last_updated": "2026-09-29T09:54:15",
     "data_dictionary": {
       "macro_daily": "1 dòng/ngày: vnindex_price/rsi/trend, breadth_up/down (trong danh mục theo dõi), hose_advance/decline/ceiling/floor (toàn sàn HOSE), prop_net_value (tự doanh mua ròng, VNĐ).",
       "sector_flow_daily": "1 dòng/ngành/ngày: count (số mã), inflow_count (số mã dòng tiền vào mạnh), net_val_sum (tổng khối ngoại mua ròng theo ngành, VNĐ), pe_avg/pb_avg (định giá TB ngành).",
