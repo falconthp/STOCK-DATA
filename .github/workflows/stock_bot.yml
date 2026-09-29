@@ -1,0 +1,51 @@
+name: Stock Analysis Bot
+
+# Bot chạy tự động theo lịch (giờ Việt Nam = UTC+7, nên giờ cron bên dưới đã trừ đi 7 tiếng).
+# Lịch mặc định (có thể sửa lại thoải mái ở phần "cron" bên dưới):
+#   - 09:20  giờ VN (02:20 UTC) -> đầu phiên sáng, lấy dữ liệu "hiện tại"
+#   - 11:20  giờ VN (04:20 UTC) -> cuối phiên sáng
+#   - 14:20  giờ VN (07:20 UTC) -> giữa phiên chiều
+#   - 16:10  giờ VN (09:10 UTC) -> sau khi đóng cửa (14:45), để lưu dữ liệu CHỐT phiên vào GitHub
+# Chỉ chạy các ngày thứ 2 - thứ 6 (1-5 trong cron = Mon-Fri).
+on:
+  schedule:
+    - cron: "20 2 * * 1-5"
+    - cron: "20 4 * * 1-5"
+    - cron: "20 7 * * 1-5"
+    - cron: "10 9 * * 1-5"
+  # Cho phép bấm nút "Run workflow" trên GitHub để chạy thủ công bất kỳ lúc nào (giữ thói quen cũ).
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cài thư viện
+        run: pip install -r requirements.txt
+
+      - name: Chạy bot phân tích
+        env:
+          SSI_CLIENT_ID: ${{ secrets.SSI_CLIENT_ID }}
+          SSI_API_KEY: ${{ secrets.SSI_API_KEY }}
+          SSI_API_SECRET: ${{ secrets.SSI_API_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GH_HISTORY_TOKEN }}
+          GITHUB_REPO: ${{ secrets.GH_HISTORY_REPO }}
+          GITHUB_BRANCH: ${{ secrets.GH_HISTORY_BRANCH }}
+          HISTORY_GITHUB_PATH: ${{ secrets.HISTORY_GITHUB_PATH }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          VALUATION_SOURCE: ${{ secrets.VALUATION_SOURCE }}
+        run: python stock_analysis_bot.py
