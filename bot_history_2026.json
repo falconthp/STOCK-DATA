@@ -2697,7 +2697,7 @@
       "pe": null,
       "pb": null,
       "foreign_room_pct": 78.4,
-      "money_flow": "ra_manh",
+      "money_flow": "binh_thuong",
       "money_flow_basis": "khoi_ngoai",
       "foreign_net_val": -22309560000.0,
       "is_buy_signal": false,
@@ -2759,10 +2759,10 @@
       "cci": -99.7,
       "pe": null,
       "pb": null,
-      "foreign_room_pct": null,
+      "foreign_room_pct": 4.4,
       "money_flow": "binh_thuong",
-      "money_flow_basis": "khoi_luong",
-      "foreign_net_val": null,
+      "money_flow_basis": "khoi_ngoai",
+      "foreign_net_val": -11193615850.0,
       "is_buy_signal": false,
       "is_sell_signal": false
     },
@@ -3189,7 +3189,7 @@
   ],
   "_meta": {
     "year": 2026,
-    "last_updated": "2026-09-29T14:50:38",
+    "last_updated": "2026-09-29T15:05:15",
     "data_dictionary": {
       "macro_daily": "1 dòng/phiên (date = ngày phiên đã chốt, không phải ngày chạy bot): vnindex_price/rsi/trend, breadth_up/down (trong danh mục theo dõi), hose_advance/decline/ceiling/floor (toàn sàn HOSE), prop_net_value (tự doanh mua ròng, VNĐ).",
       "sector_flow_daily": "1 dòng/ngành/phiên: count (số mã), inflow_count (số mã dòng tiền vào mạnh), net_val_sum (tổng khối ngoại mua ròng theo ngành, VNĐ), pe_avg/pb_avg (định giá TB ngành).",
