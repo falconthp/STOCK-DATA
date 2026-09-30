@@ -398,7 +398,12 @@ def get_foreign_flow_ssi(symbol: str):
          GHÉP phần room/khối ngoại từ "đã chốt" vào, giữ nguyên giá live — tránh mất trắng thông
          tin trên Telegram dù giá vẫn hiển thị đúng theo phiên."""
     client = get_ssi_client()
-    now = datetime.now()
+    # SỬA 30/09/2026: PHẢI dùng giờ VIỆT NAM ở đây (now_vn()), không phải datetime.now() (giờ hệ
+    # thống máy chủ). Trên GitHub Actions, máy chủ chạy giờ UTC — _is_vn_trading_hours() so sánh
+    # trực tiếp now.time() với các mốc "09:00"/"11:30"/"13:00"/"14:45" (vốn là giờ VN), nên nếu
+    # truyền giờ UTC vào, bot chạy đúng 09:20 giờ VN (=02:20 UTC) sẽ bị coi là "ngoài giờ giao dịch"
+    # và bỏ qua luôn API "hiện tại" — chỉ dùng dữ liệu phiên ĐÃ CHỐT (hôm qua), dù đang trong phiên.
+    now = now_vn()
 
     # (1) Dữ liệu phiên ĐÃ CHỐT gần nhất — luôn qua API lịch sử, không phụ thuộc giờ chạy bot.
     close_data = None
@@ -456,7 +461,7 @@ def get_market_breadth_ssi() -> dict:
         return None
     try:
         client = get_ssi_client()
-        today_str = datetime.now().strftime("%Y/%m/%d")
+        today_str = now_vn().strftime("%Y/%m/%d")  # ngày theo giờ VN, không phải giờ UTC của máy chủ
         s = client.market_data.get_index_summary_historical("VNINDEX", today_str)
         if s is None:
             return None
