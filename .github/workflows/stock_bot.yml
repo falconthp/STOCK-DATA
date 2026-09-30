@@ -32,8 +32,19 @@ jobs:
       - name: Cài thư viện
         run: pip install -r requirements.txt
 
+      # vnstock và vnai đang bị PyPI "quarantine" (không pip install được từ PyPI).
+      # Dùng tạm bản đã cài sẵn ở máy, đóng gói trong vendor/vnstock_vendor.zip,
+      # giải nén ra rồi trỏ PYTHONPATH vào đó để Python import được như bình thường.
+      # Khi nào PyPI gỡ quarantine, có thể xoá bước này và thêm lại vnstock/vnai
+      # vào requirements.txt như cũ.
+      - name: Giải nén thư viện vnstock/vnai (đóng gói sẵn, do PyPI đang quarantine)
+        run: |
+          mkdir -p vendor_extracted
+          unzip -o vnstock_vendor.zip -d vendor_extracted
+
       - name: Chạy bot phân tích
         env:
+          PYTHONPATH: ${{ github.workspace }}/vendor_extracted
           SSI_CLIENT_ID: ${{ secrets.SSI_CLIENT_ID }}
           SSI_API_KEY: ${{ secrets.SSI_API_KEY }}
           SSI_API_SECRET: ${{ secrets.SSI_API_SECRET }}
