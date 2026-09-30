@@ -967,6 +967,15 @@ def analyze_ticker(symbol: str, sector_map: dict = None) -> dict:
         "price_change_pct": price_change_pct,
         "price_source": price_source,
         "ohlc_price_debug": ohlc_price_for_debug,
+        # CHẨN ĐOÁN 30/09/2026: ngày của nến OHLC và ngày của dữ liệu "live" (foreign_flow_live) —
+        # in ra log để xác nhận SSI có thực sự trả về dữ liệu của ĐÚNG NGÀY HÔM NAY hay không, hay
+        # đang lặng lẽ trả về 1 ngày cũ hơn (foreign_flow_live == foreign_flow_close do live rỗng).
+        "ohlc_date_debug": close_date_str,
+        "live_date_debug": (
+            foreign_flow_live.get("date").strftime("%Y-%m-%d %H:%M")
+            if foreign_flow_live and foreign_flow_live.get("date") is not None and pd.notna(foreign_flow_live.get("date"))
+            else None
+        ),
         "volume": float(last["volume"]) if pd.notna(last["volume"]) else None,
         # Giá trị giao dịch ước tính = giá đóng cửa × khối lượng (không có sẵn field "value" riêng
         # từ nguồn giá đang dùng — đây là cách tính chuẩn phổ biến, đủ chính xác để so sánh/sắp xếp).
@@ -1552,8 +1561,10 @@ def main():
         for attempt in (1, 2):  # thử lại 1 lần nếu bị chặn rate limit
             try:
                 r = analyze_ticker(symbol, sector_map=sector_map)
-                log.info("%s: giá %.0f (nguồn: %s, OHLC gốc: %.0f) | RSI %s | dòng tiền %s",
-                         symbol, r["price"], r["price_source"], r["ohlc_price_debug"], r["rsi"], r["money_flow"])
+                log.info("%s: giá %.0f (nguồn: %s, OHLC gốc: %.0f, ngày OHLC: %s, ngày dữ liệu live: %s) "
+                         "| RSI %s | dòng tiền %s",
+                         symbol, r["price"], r["price_source"], r["ohlc_price_debug"],
+                         r["ohlc_date_debug"], r["live_date_debug"], r["rsi"], r["money_flow"])
                 break
             except SystemExit as e:
                 # vnstock/vnai chủ động gọi sys.exit() khi vượt rate limit — đây KHÔNG
