@@ -30,7 +30,11 @@ jobs:
           python-version: "3.11"
 
       - name: Cài thư viện
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          # Cài riêng, bỏ qua kiểm tra phụ thuộc (--no-deps) vì gói này tự khai "cần vnstock"
+          # trong metadata, mà vnstock đang bị PyPI khóa -> nếu để pip tự giải quyết sẽ lỗi.
+          pip install --no-deps vnstock_ezchart
 
       # vnstock và vnai đang bị PyPI "quarantine" (không pip install được từ PyPI).
       # Dùng tạm bản đã cài sẵn ở máy, đóng gói trong vendor/vnstock_vendor.zip,
