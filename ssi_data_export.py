@@ -30,7 +30,7 @@ import json
 import base64
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 import requests
 from dotenv import load_dotenv
@@ -42,6 +42,12 @@ except ImportError:
     print("Thiếu thư viện ssi-sdk. Chạy: pip install -r requirements.txt")
     sys.exit(1)
 load_dotenv()
+# SỬA 30/09/2026: GitHub Actions chạy bằng giờ UTC, datetime.now() (không có tzinfo) trả về giờ
+# SERVER (UTC), không phải giờ Việt Nam — dùng now_vn() cho MỌI chỗ HIỂN THỊ thời gian (giống
+# stock_analysis_bot.py), tránh lặp lại lỗi "giờ chạy" bị lệch 7 tiếng.
+VN_TZ = timezone(timedelta(hours=7))
+def now_vn() -> datetime:
+    return datetime.now(VN_TZ)
 # ========================= CẤU HÌNH =========================
 SSI_API_KEY = os.getenv("SSI_API_KEY", "").strip()
 SSI_API_SECRET = os.getenv("SSI_API_SECRET", "").strip()
@@ -93,26 +99,46 @@ GEMINI_PROMPT = os.getenv("GEMINI_PROMPT", (
     "TIÊU ĐỀ CÓ EMOJI y hệt mẫu bên dưới (không đổi chữ, không bỏ tiêu đề) để người đọc biết ngay đang "
     "xem phần gì và mã được liệt kê theo tiêu chí nào:\n"
     "\n"
-    "PHẦN 1 — tiêu đề đúng '📊 VN-INDEX & THỊ TRƯỜNG CHUNG': lấy từ market_index_summary (dòng mới "
-    "nhất), nêu chỉ số VN-Index, tăng/giảm bao nhiêu điểm và %, độ rộng (số mã tăng/giảm/đứng giá), "
-    "dòng tiền tự doanh mua/bán ròng. Sau đó 1 câu nhận định ngắn: thị trường đang tích cực/tiêu "
-    "cực/giằng co và vì sao.\n"
+    "QUAN TRỌNG NHẤT VỀ SỐ LIỆU: file có sẵn 3 trường ĐÃ TÍNH TOÁN/LỌC/SẮP XẾP SẴN bằng code — "
+    "'market_snapshot' (số liệu VN-Index + độ rộng + dòng tiền tự doanh + dòng tiền khối ngoại đã "
+    "cộng sẵn), 'buy_signal_candidates' (danh sách mã ĐÃ LỌC + SẮP XẾP SẴN cho phần tín hiệu mua "
+    "tốt), 'room_low_candidates' (danh sách mã ĐÃ LỌC + SẮP XẾP SẴN cho phần room cạn). BẠN BẮT "
+    "BUỘC CHỈ ĐƯỢC DÙNG ĐÚNG các số/danh sách trong 3 trường này để viết PHẦN 1-2-3 bên dưới — "
+    "TUYỆT ĐỐI KHÔNG tự cộng/tự tính lại từ securities_summary hay market_index_summary (2 trường "
+    "này chỉ để tham khảo bối cảnh, KHÔNG dùng để tính số), TUYỆT ĐỐI KHÔNG tự tìm thêm mã khác "
+    "ngoài danh sách đã cho, và TUYỆT ĐỐI KHÔNG tự sắp xếp lại thứ tự mã đã cho.\n"
     "\n"
-    "PHẦN 2 — tiêu đề đúng '🎯 MÃ CÓ TÍN HIỆU MUA TỐT (giá tăng + khối ngoại mua ròng)': chọn tối đa "
-    "3-4 mã có xu hướng giá tốt kèm khối ngoại mua ròng rõ trong securities_summary. Với MỖI mã, sau "
-    "khi liệt kê số liệu PHẢI có thêm 1 câu NHẬN ĐỊNH riêng giải thích TẠI SAO đây là tín hiệu tốt "
-    "(ví dụ: tăng giá kèm khối ngoại mua ròng liên tục nhiều phiên là dấu hiệu dòng tiền lớn đang gom "
-    "hàng, khác với tăng giá đơn thuần do đầu cơ ngắn hạn).\n"
+    "PHẦN 1 — tiêu đề đúng '📊 VN-INDEX & THỊ TRƯỜNG CHUNG': lấy TOÀN BỘ số liệu từ market_snapshot. "
+    "Trình bày: VN-Index (vnindex_value, tăng/giảm vnindex_change điểm, vnindex_change_percent %); "
+    "độ rộng (advance mã tăng / decline mã giảm / steady mã đứng giá); dòng tiền tự doanh (ghi rõ "
+    "prop_buy_value mua vào bao nhiêu, prop_sell_value bán ra bao nhiêu, prop_net_value mua/bán ròng "
+    "bao nhiêu — nếu prop_net_value dương thì ghi 'mua ròng', âm thì ghi 'bán ròng'); dòng tiền khối "
+    "ngoại CỦA DANH MỤC ĐANG THEO DÕI (ghi watchlist_foreign_buy_value mua bao nhiêu, "
+    "watchlist_foreign_sell_value bán bao nhiêu, watchlist_foreign_net_value mua/bán ròng bao nhiêu — "
+    "PHẢI NÊU RÕ đây là dòng tiền khối ngoại của watchlist_symbol_count mã đang theo dõi, KHÔNG PHẢI "
+    "toàn sàn, vì SSI không cung cấp số liệu khối ngoại toàn sàn). Sau đó 1 câu nhận định ngắn: thị "
+    "trường đang tích cực/tiêu cực/giằng co và vì sao.\n"
     "\n"
-    "PHẦN 3 — tiêu đề đúng '🔒 MÃ ROOM KHỐI NGOẠI SẮP/ĐÃ CẠN': chọn tối đa 3-4 mã có "
-    "remain_foreign_room/total_foreign_room thấp nhất (ưu tiên mã room = 0 hoặc gần 0) trong "
-    "securities_summary. Với MỖI mã, kèm 1 câu nhận định room cạn có ý nghĩa gì với khả năng khối "
-    "ngoại mua thêm/định giá mã đó.\n"
+    "PHẦN 2 — tiêu đề đúng '🎯 MÃ CÓ TÍN HIỆU MUA TỐT (giá tăng + khối ngoại mua ròng)': dùng ĐÚNG "
+    "danh sách mã trong buy_signal_candidates, ĐÚNG THỨ TỰ đã cho (đã sắp xếp giảm dần theo mua ròng "
+    "khối ngoại — mã mua ròng nhiều nhất lên đầu). Nếu buy_signal_candidates rỗng, ghi 'không có mã "
+    "nào đạt tiêu chí hôm nay'. Với MỖI mã, hiển thị giá (close + price_change_percent), khối ngoại "
+    "mua ròng (net_foreign_value), rồi thêm 1 câu NHẬN ĐỊNH riêng giải thích TẠI SAO đây là tín hiệu "
+    "tốt (ví dụ: tăng giá kèm khối ngoại mua ròng là dấu hiệu dòng tiền lớn đang gom hàng).\n"
+    "\n"
+    "PHẦN 3 — tiêu đề đúng '🔒 MÃ ROOM KHỐI NGOẠI SẮP/ĐÃ CẠN': dùng ĐÚNG danh sách mã trong "
+    "room_low_candidates, ĐÚNG THỨ TỰ đã cho (room còn lại thấp nhất lên đầu). Nếu rỗng, ghi 'không "
+    "có mã nào room cạn đáng chú ý hôm nay'. Với MỖI mã, hiển thị remain_foreign_room/"
+    "total_foreign_room và room_percent (%), kèm 1 câu nhận định room cạn có ý nghĩa gì.\n"
     "\n"
     "PHẦN 4 — tiêu đề đúng '🏁 KẾT LUẬN': tổng hợp lại toàn bộ 3 phần trên thành 1 đoạn ngắn (tối đa "
     "3 câu, KHÔNG lặp lại số liệu đã nêu ở trên) — 1 câu chốt xu hướng chung, 1 câu gợi ý nên làm gì "
     "(ví dụ: nên giải ngân thăm dò, nên đứng ngoài quan sát, nên chốt lời một phần...). Đây KHÔNG "
     "phải khuyến nghị đầu tư cá nhân hóa, chỉ là góc nhìn tham khảo dựa trên dữ liệu.\n"
+    "\n"
+    "TUYỆT ĐỐI KHÔNG được để lộ bất kỳ ghi chú/suy nghĩ nội bộ nào ra kết quả (ví dụ KHÔNG được viết "
+    "các câu kiểu '(lọc lại mã khác cho đúng tiêu chí)', '(kiểm tra lại số liệu)'...) — CHỈ xuất đúng "
+    "4 phần nội dung cuối cùng, sạch sẽ, không có ghi chú xử lý nào chen vào.\n"
     "\n\nYÊU CẦU BẮT BUỘC VỀ NGÔN NGỮ VÀ ĐỊNH DẠNG (vì nội dung này gửi qua Telegram dạng chữ thường):\n"
     "- 4 dòng TIÊU ĐỀ của 4 phần ở trên PHẢI giữ NGUYÊN VĂN như đã cho (kể cả emoji) — đây là quy tắc "
     "trình bày, KHÔNG tính là 'văn phong trang trọng' cần tránh.\n"
@@ -262,7 +288,7 @@ def export_securities_info(client, symbols) -> pd.DataFrame:
 def export_market_index_summary(client, days: int) -> pd.DataFrame:
     """Độ rộng toàn sàn HOSE + dòng tiền tự doanh, từng ngày (chỉ index có, KHÔNG có API lấy nguyên khoảng — phải lặp)."""
     rows = []
-    today = datetime.now()
+    today = now_vn().replace(tzinfo=None)
     for i in range(days):
         d = today - timedelta(days=i)
         try:
@@ -286,6 +312,74 @@ def _clean_for_json(df: pd.DataFrame) -> list:
     if df is None or df.empty:
         return []
     return df.astype(object).where(pd.notnull(df), None).to_dict(orient="records")
+def build_market_snapshot(df_summary: pd.DataFrame, df_breadth: pd.DataFrame) -> dict:
+    """SỬA 30/09/2026: tính SẴN bằng code các số liệu tổng hợp cho phần "VN-Index & thị trường
+    chung" — trước đây để Gemini tự cộng dồn từ nhiều dòng JSON, kết quả bị sai (vd hiện ra
+    'mua ròng 0,0 tỷ, bán ròng 0,0 tỷ' dù dữ liệu thật không phải vậy — AI tính tổng nhiều dòng dễ
+    lẫn/sai). Giờ code tính đúng 1 lần, Gemini chỉ cần ĐỌC LẠI số đã cho, không tự cộng nữa.
+
+    LƯU Ý: SSI KHÔNG có API riêng cho dòng tiền khối ngoại TOÀN SÀN (MarketIndexSummary chỉ có
+    total_prop_buy/sell_value của tự doanh, không có trường khối ngoại) — nên phần "dòng tiền khối
+    ngoại" ở đây là TỔNG CỘNG DỒN từ các mã trong danh mục đang theo dõi (ALL_SYMBOLS), không phải
+    toàn thị trường thật. Đây là giới hạn dữ liệu của SSI, không phải lỗi tính toán."""
+    snapshot = {}
+    if df_breadth is not None and not df_breadth.empty and "date" in df_breadth.columns:
+        latest = df_breadth.sort_values("date").iloc[-1]
+        prop_buy = float(latest["prop_buy_value"]) if pd.notna(latest.get("prop_buy_value")) else 0.0
+        prop_sell = float(latest["prop_sell_value"]) if pd.notna(latest.get("prop_sell_value")) else 0.0
+        snapshot["date"] = str(latest["date"])
+        snapshot["vnindex_value"] = float(latest["index_value"]) if pd.notna(latest.get("index_value")) else None
+        snapshot["vnindex_change"] = float(latest["index_change"]) if pd.notna(latest.get("index_change")) else None
+        snapshot["vnindex_change_percent"] = float(latest["index_change_percent"]) if pd.notna(latest.get("index_change_percent")) else None
+        snapshot["advance"] = int(latest["advance"]) if pd.notna(latest.get("advance")) else None
+        snapshot["decline"] = int(latest["decline"]) if pd.notna(latest.get("decline")) else None
+        snapshot["steady"] = int(latest["steady"]) if pd.notna(latest.get("steady")) else None
+        snapshot["prop_buy_value"] = prop_buy
+        snapshot["prop_sell_value"] = prop_sell
+        snapshot["prop_net_value"] = round(prop_buy - prop_sell, 1)
+    if df_summary is not None and not df_summary.empty and "date" in df_summary.columns:
+        latest_date = df_summary["date"].max()
+        latest_rows = df_summary[df_summary["date"] == latest_date]
+        fb = float(latest_rows["foreign_buy_value"].fillna(0).sum())
+        fs = float(latest_rows["foreign_sell_value"].fillna(0).sum())
+        snapshot["watchlist_foreign_date"] = str(latest_date)
+        snapshot["watchlist_symbol_count"] = int(latest_rows["symbol"].nunique())
+        snapshot["watchlist_foreign_buy_value"] = round(fb, 1)
+        snapshot["watchlist_foreign_sell_value"] = round(fs, 1)
+        snapshot["watchlist_foreign_net_value"] = round(fb - fs, 1)
+    return snapshot
+def build_buy_signal_candidates(df_summary: pd.DataFrame, top_n: int = 6) -> list:
+    """SỬA 30/09/2026: LỌC + SẮP XẾP SẴN bằng code — trước đây để Gemini tự tìm/tự chọn mã trong
+    hàng trăm dòng dữ liệu, kết quả không những sắp xếp sai mà còn để lọt câu ghi chú nội bộ kiểu
+    '(lọc lại mã khác đúng tiêu chí)' ra thẳng nội dung gửi Telegram — dấu hiệu AI vừa tìm vừa sửa
+    giữa chừng. Giờ code tự lọc đúng tiêu chí (phiên mới nhất: giá tăng VÀ khối ngoại mua ròng
+    dương) rồi SẮP XẾP GIẢM DẦN theo giá trị mua ròng khối ngoại — Gemini chỉ viết nhận định cho
+    ĐÚNG danh sách đã cho, theo ĐÚNG thứ tự đã cho, không tự tìm/tự sắp xếp nữa."""
+    if df_summary is None or df_summary.empty:
+        return []
+    latest_date = df_summary["date"].max()
+    latest = df_summary[df_summary["date"] == latest_date].copy()
+    latest["net_foreign_value"] = latest["foreign_buy_value"].fillna(0) - latest["foreign_sell_value"].fillna(0)
+    cand = latest[(latest["price_change_percent"].fillna(0) > 0) & (latest["net_foreign_value"] > 0)]
+    cand = cand.sort_values("net_foreign_value", ascending=False).head(top_n)
+    cols = ["symbol", "date", "close", "price_change_percent", "foreign_buy_value", "foreign_sell_value", "net_foreign_value"]
+    return _clean_for_json(cand[cols].round(1))
+def build_room_low_candidates(df_summary: pd.DataFrame, top_n: int = 6) -> list:
+    """SỬA 30/09/2026: tương tự build_buy_signal_candidates — lọc + sắp xếp SẴN theo % room khối
+    ngoại còn lại, TĂNG DẦN (cạn nhất lên đầu). LOẠI BỎ mã có total_foreign_room = 0 (nghĩa là mã đó
+    KHÔNG áp dụng room khối ngoại theo quy định — ví dụ ngành không giới hạn sở hữu nước ngoài —
+    KHÁC với 'room đã cạn hết'; để lẫn 2 trường hợp này là hiểu sai dữ liệu)."""
+    if df_summary is None or df_summary.empty:
+        return []
+    latest_date = df_summary["date"].max()
+    latest = df_summary[df_summary["date"] == latest_date].copy()
+    latest = latest[latest["total_foreign_room"].fillna(0) > 0]
+    if latest.empty:
+        return []
+    latest["room_percent"] = (latest["remain_foreign_room"] / latest["total_foreign_room"] * 100).round(2)
+    latest = latest.sort_values("room_percent", ascending=True).head(top_n)
+    cols = ["symbol", "date", "remain_foreign_room", "total_foreign_room", "room_percent"]
+    return _clean_for_json(latest[cols])
 def build_gemini_payload(df_summary, df_info, df_breadth) -> dict:
     """File RIÊNG, GỌN HƠN dành cho Gemini — bỏ ohlc_history VÀ chỉ giữ GEMINI_SUMMARY_DAYS phiên
     gần nhất/mã trong securities_summary (thay vì cả EXPORT_HISTORY_DAYS ngày). securities_summary
@@ -299,16 +393,31 @@ def build_gemini_payload(df_summary, df_info, df_breadth) -> dict:
             .tail(GEMINI_SUMMARY_DAYS)
         )
     return {
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "generated_at": now_vn().strftime("%Y-%m-%d %H:%M:%S"),
         "symbols": ALL_SYMBOLS,
         "data_dictionary": {
-            "securities_summary": f"Biến động giá, % thay đổi, dòng tiền + room khối ngoại — CHỈ {GEMINI_SUMMARY_DAYS} PHIÊN GẦN NHẤT/mã (foreign_buy/sell_vol/value, remain_foreign_room, total_foreign_room, price_change_percent)",
+            "market_snapshot": "SỐ LIỆU ĐÃ TÍNH SẴN bằng code cho phiên mới nhất — VN-Index, độ rộng, "
+                                "dòng tiền tự doanh (mua/bán/ròng), dòng tiền khối ngoại TỔNG CỦA DANH "
+                                "MỤC ĐANG THEO DÕI (watchlist_foreign_*, KHÔNG PHẢI toàn sàn vì SSI không "
+                                "có API cho số liệu toàn sàn). DÙNG ĐÚNG các số này, KHÔNG tự cộng lại "
+                                "từ securities_summary hay market_index_summary.",
+            "buy_signal_candidates": "Danh sách mã ĐÃ LỌC + SẮP XẾP SẴN bằng code cho phần 'tín hiệu mua "
+                                      "tốt' — tiêu chí: giá tăng VÀ khối ngoại mua ròng dương, sắp xếp "
+                                      "GIẢM DẦN theo net_foreign_value. CHỈ dùng đúng danh sách và ĐÚNG "
+                                      "THỨ TỰ này, KHÔNG tự tìm/tự chọn mã khác, KHÔNG tự sắp xếp lại.",
+            "room_low_candidates": "Danh sách mã ĐÃ LỌC + SẮP XẾP SẴN bằng code cho phần 'room khối ngoại "
+                                    "sắp/đã cạn' — sắp xếp TĂNG DẦN theo room_percent (room còn lại thấp "
+                                    "nhất lên đầu). CHỈ dùng đúng danh sách này, KHÔNG tự tìm mã khác.",
+            "securities_summary": f"Dữ liệu chi tiết đầy đủ (tham khảo thêm nếu cần) — CHỈ {GEMINI_SUMMARY_DAYS} PHIÊN GẦN NHẤT/mã",
             "securities_info": "Thông tin cơ bản (tĩnh): tên công ty, sàn, ngành ICB",
-            "market_index_summary": "Độ rộng toàn sàn HOSE + dòng tiền tự doanh theo ngày, chỉ số VN-Index",
+            "market_index_summary": "Dữ liệu thô đầy đủ của VN-Index theo ngày (tham khảo — số liệu chính đã có sẵn trong market_snapshot)",
         },
         "note": (f"Dữ liệu thô từ SSI FastConnect Data, không phải khuyến nghị đầu tư. File này ĐÃ RÚT GỌN "
                  f"(bỏ lịch sử giá chi tiết, chỉ giữ {GEMINI_SUMMARY_DAYS} phiên gần nhất/mã) để đảm bảo AI "
                  f"đọc được TOÀN BỘ nội dung — không bị cắt giữa file."),
+        "market_snapshot": build_market_snapshot(df_summary, df_breadth),
+        "buy_signal_candidates": build_buy_signal_candidates(df_summary),
+        "room_low_candidates": build_room_low_candidates(df_summary),
         "securities_summary": _clean_for_json(df_recent),
         "securities_info": _clean_for_json(df_info),
         "market_index_summary": _clean_for_json(df_breadth),
@@ -318,7 +427,7 @@ def build_combined_data(df_ohlc, df_summary, df_info, df_breadth) -> dict:
     KHÔNG có master_data (ceiling/floor) — SSI không có API lấy riêng theo từng mã cho loại này,
     buộc phải kéo toàn sàn nên đã bỏ theo yêu cầu chỉ lấy đúng mã bạn cần."""
     return {
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "generated_at": now_vn().strftime("%Y-%m-%d %H:%M:%S"),
         "symbols": ALL_SYMBOLS,
         "data_dictionary": {
             "ohlc_history": "Giá & khối lượng lịch sử theo phiên: symbol, date, open, high, low, close, volume, value",
@@ -349,7 +458,7 @@ def push_to_github(local_path: str, repo_path: str):
     except Exception as e:
         log.debug("Không kiểm tra được file cũ trên GitHub (có thể là lần đầu tạo): %s", e)
     payload = {
-        "message": f"Cập nhật dữ liệu SSI — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "message": f"Cập nhật dữ liệu SSI — {now_vn().strftime('%Y-%m-%d %H:%M')}",
         "content": content_b64,
         "branch": GITHUB_BRANCH,
     }
@@ -489,7 +598,7 @@ def main():
     log.info("Xuất dữ liệu SSI cho %d mã: %s", len(ALL_SYMBOLS), ", ".join(ALL_SYMBOLS))
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     client = get_client()
-    to_date = datetime.now()
+    to_date = now_vn().replace(tzinfo=None)
     from_date = to_date - timedelta(days=EXPORT_HISTORY_DAYS)
     df_ohlc = export_ohlc(client, ALL_SYMBOLS, from_date, to_date)
     df_ohlc.to_csv(os.path.join(OUTPUT_DIR, "ohlc_history.csv"), index=False, encoding="utf-8-sig")
@@ -538,7 +647,7 @@ def main():
                 latest_session = None
                 if df_breadth is not None and not df_breadth.empty and "date" in df_breadth.columns:
                     latest_session = str(df_breadth.sort_values("date")["date"].iloc[-1])
-                header_lines = [f"⏰ Chạy lúc: {datetime.now().strftime('%H:%M %d/%m/%Y')}"]
+                header_lines = [f"⏰ Chạy lúc: {now_vn().strftime('%H:%M %d/%m/%Y')} (giờ VN)"]
                 if latest_session:
                     header_lines.append(f"📅 Dữ liệu phiên: {latest_session}")
                 header = "\n".join(header_lines)
