@@ -31,3 +31,10 @@ seaborn
 tenacity
 squarify
 wordcloud
+
+# SỬA 30/09/2026: vnstock_ezchart (cài --no-deps trong workflow) tự "import mplfinance" ngay
+# khi load, mà mplfinance KHÔNG có trong requirements này -> vnstock_ezchart lỗi ngầm khi
+# import -> vnstock coi như "không có thư viện biểu đồ nào" -> bỏ qua lấy VN-Index, báo cáo
+# thiếu hẳn dòng VN-Index / xu hướng vĩ mô. mplfinance KHÔNG bị PyPI quarantine, cài bình
+# thường được.
+mplfinance
