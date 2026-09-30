@@ -78,12 +78,14 @@ GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main").strip()
 GITHUB_FILE_PATH = os.getenv("GITHUB_FILE_PATH", "all_data.json").strip()
 GEMINI_FILE_PATH = os.getenv("GEMINI_FILE_PATH", "gemini_data.json").strip()
 GEMINI_SUMMARY_DAYS = int(os.getenv("GEMINI_SUMMARY_DAYS", "20"))  # chỉ giữ N phiên gần nhất/mã cho file gọn
-# ---- Gemini API (tùy chọn) — tự phân tích qua url_context, KHÔNG cần mở Gemini/import tay ----
+# ---- Gemini API (tùy chọn) — tự phân tích qua Files API (upload thẳng file), KHÔNG cần mở
+# Gemini/import tay. SỬA 30/09/2026: trước dùng url_context (đưa link cho Gemini tự tải) — không
+# ổn định với link raw.githubusercontent.com, đổi sang upload file trực tiếp cho chắc chắn.
 ENABLE_GEMINI_ANALYSIS = os.getenv("ENABLE_GEMINI_ANALYSIS", "false").lower() == "true"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 GEMINI_PROMPT = os.getenv("GEMINI_PROMPT", (
-    "Dựa vào dữ liệu JSON tại đường link sau, hãy phân tích và tư vấn ngắn gọn bằng tiếng Việt: "
+    "Dựa vào dữ liệu JSON trong file đính kèm, hãy phân tích và tư vấn ngắn gọn bằng tiếng Việt: "
     "1) Các mã có tín hiệu mua tốt dựa trên xu hướng giá và dòng tiền khối ngoại (securities_summary); "
     "2) Mã nào có room khối ngoại (remain_foreign_room/total_foreign_room) gần hết; "
     "3) Nhận định xu hướng chung dựa trên market_index_summary (độ rộng toàn sàn, dòng tiền tự doanh). "
@@ -324,9 +326,16 @@ def push_to_github(local_path: str, repo_path: str):
         log.error("Lỗi khi đẩy lên GitHub: %s", e)
         return None
 # ========================= GEMINI API (tự động, không thao tác tay) =========================
-def analyze_with_gemini(raw_url: str) -> str:
-    """Gọi Gemini API với công cụ url_context — Gemini tự đọc link mỗi lần gọi, không cần
-    'Import code' hay đính kèm file tay. Trả về chuỗi phân tích, None nếu lỗi/chưa cấu hình."""
+def analyze_with_gemini(local_path: str) -> str:
+    """Gọi Gemini API — UPLOAD THẲNG nội dung file (Gemini Files API) thay vì đưa link cho Gemini
+    tự đọc. Trả về chuỗi phân tích, None nếu lỗi/chưa cấu hình.
+
+    SỬA 30/09/2026: bản trước dùng công cụ url_context, đưa link raw.githubusercontent.com cho
+    Gemini tự fetch — thực tế Gemini báo "Không thể truy cập vào đường dẫn JSON được cung cấp",
+    dù link mở bình thường trên trình duyệt (url_context không đáng tin cậy với link GitHub raw
+    mới đẩy lên, có thể do cache/robots của Google khi fetch). Dùng Files API (client.files.upload)
+    để đưa thẳng nội dung file cho Gemini là cách chắc chắn hơn, không phụ thuộc Gemini tự tải
+    mạng ngoài."""
     if not ENABLE_GEMINI_ANALYSIS:
         return None
     if not GEMINI_API_KEY:
@@ -334,20 +343,18 @@ def analyze_with_gemini(raw_url: str) -> str:
         return None
     try:
         from google import genai
-        from google.genai.types import GenerateContentConfig
         from google.genai.errors import ServerError
     except ImportError:
         log.warning("Thiếu thư viện google-genai. Chạy: pip install google-genai")
         return None
     client = genai.Client(api_key=GEMINI_API_KEY)
-    prompt = f"{GEMINI_PROMPT}\n\nLink dữ liệu (JSON): {raw_url}"
     retries, backoff = 3, 5.0
     for attempt in range(retries + 1):
         try:
+            uploaded = client.files.upload(file=local_path, config={"mime_type": "application/json"})
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=prompt,
-                config=GenerateContentConfig(tools=[{"url_context": {}}]),
+                contents=[GEMINI_PROMPT, uploaded],
             )
             parts = response.candidates[0].content.parts if response.candidates else []
             text = "".join(p.text for p in parts if getattr(p, "text", None))
@@ -469,9 +476,14 @@ def main():
         if raw_url:
             print(f"\n🔗 Link Raw (để dùng thủ công nếu cần):\n{raw_url}\n")
         gemini_raw_url = push_to_github(gemini_path, GEMINI_FILE_PATH)
-        if gemini_raw_url and ENABLE_GEMINI_ANALYSIS:
-            log.info("Đang gọi Gemini API để phân tích tự động (dùng file gọn, không cần mở Gemini)...")
-            analysis = analyze_with_gemini(gemini_raw_url)
+        if gemini_raw_url:
+            print(f"🔗 Link Raw (bản gọn, cho tham khảo thủ công — Gemini KHÔNG đọc qua link này nữa):\n{gemini_raw_url}\n")
+        if ENABLE_GEMINI_ANALYSIS:
+            # SỬA 30/09/2026: gọi Gemini bằng file CỤC BỘ (gemini_path) qua Files API, KHÔNG còn
+            # phụ thuộc việc đẩy GitHub có thành công hay không, và không còn nhờ Gemini tự tải
+            # link raw.githubusercontent.com nữa (đã xác nhận không ổn định).
+            log.info("Đang gọi Gemini API để phân tích tự động (upload thẳng file, không qua link)...")
+            analysis = analyze_with_gemini(gemini_path)
             if analysis:
                 analysis = _sanitize_for_telegram(analysis)
                 print("\n===== PHÂN TÍCH TỪ GEMINI =====\n")
