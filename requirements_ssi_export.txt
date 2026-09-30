@@ -1,0 +1,12 @@
+# Thư viện riêng cho ssi_data_export.py — KHÔNG dùng chung file requirements.txt của
+# stock_analysis_bot.py vì script này KHÔNG cần vnstock/vnai/matplotlib/ta (không vẽ biểu
+# đồ, không tính RSI/MACD/CCI, chỉ xuất dữ liệu thô từ SSI + gọi Gemini). Nhờ vậy workflow
+# của script này ĐƠN GIẢN HƠN, KHÔNG cần bước giải nén vendor_extracted.
+pandas
+requests
+python-dotenv
+ssi-sdk==3.2.1
+
+# Dùng để tự gọi Gemini API phân tích (ENABLE_GEMINI_ANALYSIS=true) — gói công khai trên
+# PyPI, không bị quarantine như vnstock/vnai.
+google-genai
