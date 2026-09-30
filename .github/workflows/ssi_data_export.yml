@@ -1,0 +1,53 @@
+name: SSI Data Export + Gemini
+
+# Chạy 1 lần/ngày vào 17:00 giờ Việt Nam (UTC+7 -> 10:00 UTC), các ngày thứ 2 - thứ 6, sau khi
+# thị trường đã đóng cửa (14:45) — đủ để dữ liệu phiên hôm đó đã chốt hẳn.
+# Script này TÁCH BIỆT HOÀN TOÀN với stock_bot.yml (bot phân tích + gửi Telegram 4 lần/ngày) —
+# chỉ xuất dữ liệu thô ra CSV/JSON, đẩy lên GitHub, rồi gọi Gemini API phân tích và gửi kết quả
+# đó qua Telegram (KHÔNG phải báo cáo kỹ thuật RSI/MACD như bot chính).
+on:
+  schedule:
+    - cron: "0 10 * * 1-5"
+  # Cho phép bấm nút "Run workflow" trên GitHub để chạy thủ công bất kỳ lúc nào.
+  workflow_dispatch:
+
+jobs:
+  export-and-analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Script này KHÔNG cần vnstock/vnai/matplotlib -> KHÔNG cần bước giải nén vendor như
+      # stock_bot.yml, chỉ cần requirements_ssi_export.txt (nhẹ hơn nhiều, cài nhanh hơn).
+      - name: Cài thư viện
+        run: pip install -r requirements_ssi_export.txt
+
+      - name: Xuất dữ liệu SSI + phân tích Gemini + gửi Telegram
+        env:
+          SSI_CLIENT_ID: ${{ secrets.SSI_CLIENT_ID }}
+          SSI_API_KEY: ${{ secrets.SSI_API_KEY }}
+          SSI_API_SECRET: ${{ secrets.SSI_API_SECRET }}
+          # Đẩy file lên đúng repo này — dùng lại đúng secret GH_HISTORY_TOKEN đã cấu hình cho
+          # stock_bot.yml (token đã có quyền Read & Write đúng repo, không cần tạo token mới).
+          AUTO_PUSH_GITHUB: "true"
+          GITHUB_TOKEN: ${{ secrets.GH_HISTORY_TOKEN }}
+          GITHUB_REPO: ${{ secrets.GH_HISTORY_REPO }}
+          GITHUB_BRANCH: ${{ secrets.GH_HISTORY_BRANCH }}
+          # Lưu vào thư mục riêng ssi_export/ trong repo để không lẫn với file lịch sử của bot
+          # chính (bot_history_2026.json) hay file YAML/script khác ở gốc repo.
+          GITHUB_FILE_PATH: "ssi_export/all_data.json"
+          GEMINI_FILE_PATH: "ssi_export/gemini_data.json"
+          # Tự động gọi Gemini phân tích link vừa đẩy lên, rồi gửi kết quả qua Telegram.
+          ENABLE_GEMINI_ANALYSIS: "true"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SEND_GEMINI_TO_TELEGRAM: "true"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python ssi_data_export.py
