@@ -243,10 +243,26 @@ SSI_TIMEOUT_SEC = int(os.getenv("SSI_TIMEOUT_SEC", "15"))
 SSI_MAX_RETRIES = int(os.getenv("SSI_MAX_RETRIES", "3"))
 SSI_RETRY_DELAY = float(os.getenv("SSI_RETRY_DELAY", "1.0"))
 
+# SỬA 30/09/2026 (REST API của SSI trễ ~1 ngày — xem ghi chú lớn ở get_foreign_flow_ssi bên dưới):
+# đã kiểm chứng thực tế — chạy giữa phiên sáng, get_ohlc_1day_historical VÀ get_securities_summary
+# đều chỉ trả tới dữ liệu hôm qua, dù thị trường đang mở cửa. Đây là giới hạn THIẾT KẾ của API REST
+# đó (dữ liệu tổng hợp theo lô, không phải lỗi/thiếu quyền — đã xác nhận API Key có đủ quyền
+# "All api data" + "All stream data"). Dữ liệu THẬT SỰ real-time nằm ở kênh Streaming (WebSocket)
+# riêng của SSI — bật bằng ENABLE_SSI_STREAM=true (mặc định bật) để dùng kênh này thay REST trong
+# giờ giao dịch. Tắt (=false) để quay lại hoàn toàn REST như trước nếu streaming gây lỗi.
+ENABLE_SSI_STREAM = os.getenv("ENABLE_SSI_STREAM", "true").lower() == "true"
+# Thời gian (giây) mở kết nối streaming để "nghe" tick khớp lệnh + biến động khối ngoại cho CẢ
+# DANH MỤC cùng lúc (1 kết nối duy nhất, không phải 1 request/mã như REST) trước khi ngắt và dùng
+# kết quả thu được. Mã ít giao dịch có thể không kịp có tick nào trong khoảng này — sẽ tự dùng REST
+# dự phòng cho riêng mã đó (xem get_foreign_flow_ssi). Tăng giá trị này nếu muốn "phủ" được nhiều
+# mã hơn, nhưng nhớ vẫn phải nằm trong giới hạn timeout-minutes của workflow GitHub Actions.
+SSI_STREAM_WAIT_SEC = float(os.getenv("SSI_STREAM_WAIT_SEC", "25"))
+
 try:
-    from ssi_sdk import Config as SSIConfig, Auth as SSIAuth, Data as SSIData
+    from ssi_sdk import Config as SSIConfig, Auth as SSIAuth, Data as SSIData, Stream as SSIStream
     from ssi_sdk.exceptions import RateLimitError as SSIRateLimitError
     from ssi_sdk.enums import Board as SSIBoard
+    from ssi_sdk.models import TradeMessage as SSITradeMessage, ForeignRoomMessage as SSIForeignRoomMessage
     _SSI_SDK_AVAILABLE = True
 except ImportError:
     _SSI_SDK_AVAILABLE = False
@@ -296,7 +312,7 @@ def get_history_vnstock(symbol: str, days: int = HISTORY_DAYS) -> pd.DataFrame:
 
 
 # ========================= DỮ LIỆU GIÁ — SSI FASTCONNECT DATA (SDK chính thức) =========================
-_ssi_state = {"client": None}
+_ssi_state = {"client": None, "auth": None}
 
 
 def get_ssi_client():
@@ -311,7 +327,70 @@ def get_ssi_client():
     auth.authenticate()  # không truyền OTP — chỉ cần cho đọc dữ liệu, không cần cho đặt lệnh
     client = SSIData(auth)
     _ssi_state["client"] = client
+    _ssi_state["auth"] = auth  # lưu lại để dùng chung cho kết nối Streaming (không cần login lại)
     return client
+
+
+# ========================= DỮ LIỆU GIÁ — SSI STREAMING (WebSocket, THẬT SỰ real-time) =========================
+# SỬA 30/09/2026: xem ghi chú lớn ở ENABLE_SSI_STREAM (phần CẤU HÌNH) và ở get_foreign_flow_ssi bên
+# dưới — REST API (get_ohlc_1day_historical, get_securities_summary...) của SSI có độ trễ ~1 ngày
+# theo THIẾT KẾ, không phải lỗi. Hàm này mở 1 kết nối WebSocket DUY NHẤT cho CẢ danh mục, "nghe" tick
+# khớp lệnh (trade) + biến động khối ngoại (room) trong SSI_STREAM_WAIT_SEC giây rồi ngắt kết nối —
+# trả về snapshot giá/dòng tiền khối ngoại MỚI NHẤT nhận được cho từng mã trong khoảng đó.
+#
+# Đây là best-effort: mã nào không có tick nào trong cửa sổ nghe (mã ít thanh khoản, hoặc lỗi kết
+# nối) sẽ không có trong dict trả về — get_foreign_flow_ssi() tự dự phòng bằng REST cho riêng mã đó.
+_current_stream_snapshot: dict = {}
+
+
+def fetch_live_snapshot_ssi_stream(symbols: list, wait_seconds: float) -> dict:
+    """Mở kết nối Streaming SSI, đăng ký nhận trade+room cho `symbols`, nghe trong `wait_seconds`
+    giây rồi ngắt. Trả về {symbol: {"price", "trade_time", "total_volume", "net_val", "net_vol",
+    "foreign_room_pct", "room_time"}} — chỉ chứa mã ĐÃ nhận được ít nhất 1 message trong lúc nghe.
+    Trả về {} nếu lỗi bất kỳ (không chặn chương trình — vòng lặp chính tự dự phòng REST)."""
+    if not _SSI_SDK_AVAILABLE or not symbols:
+        return {}
+    try:
+        get_ssi_client()  # đảm bảo đã authenticate() — dùng lại đúng token đó cho streaming
+        auth = _ssi_state.get("auth")
+        if auth is None:
+            return {}
+
+        snapshot: dict = {}
+
+        def _on_data(msg):
+            try:
+                if isinstance(msg, SSITradeMessage) and msg.symbol:
+                    d = snapshot.setdefault(msg.symbol, {})
+                    d["price"] = float(msg.price)
+                    d["trade_time"] = msg.trading_time
+                    d["total_volume"] = float(msg.total_volume) if msg.total_volume else d.get("total_volume")
+                elif isinstance(msg, SSIForeignRoomMessage) and msg.symbol:
+                    d = snapshot.setdefault(msg.symbol, {})
+                    d["net_val"] = float(msg.buy_value - msg.sell_value)
+                    d["net_vol"] = float(msg.buy_quantity - msg.sell_quantity)
+                    d["foreign_room_pct"] = (
+                        round(msg.current_room / msg.total_room * 100, 1) if msg.total_room else None
+                    )
+                    d["room_time"] = msg.trading_time
+            except Exception as e:
+                log.debug("Lỗi xử lý message streaming SSI: %s", e)
+
+        with SSIStream(auth) as stream_client:
+            stream_client.streaming.on_data = _on_data
+            stream_client.streaming.connect()
+            stream_client.streaming.subscribe_symbol_trade(symbols)
+            stream_client.streaming.subscribe_symbol_room(symbols)
+            stream_client.streaming.wait(timeout=wait_seconds)
+
+        n_price = sum(1 for d in snapshot.values() if d.get("price") is not None)
+        n_flow = sum(1 for d in snapshot.values() if d.get("net_val") is not None)
+        log.info("Streaming SSI: nhận tick giá cho %d/%d mã, dữ liệu khối ngoại cho %d/%d mã (nghe %.0fs).",
+                  n_price, len(symbols), n_flow, len(symbols), wait_seconds)
+        return snapshot
+    except Exception as e:
+        log.warning("Streaming SSI lỗi (%s) — bỏ qua, toàn bộ mã dùng REST dự phòng như cũ.", e)
+        return {}
 
 
 def get_history_ssi(symbol: str, days: int = HISTORY_DAYS) -> pd.DataFrame:
@@ -421,17 +500,44 @@ def get_foreign_flow_ssi(symbol: str):
     except Exception as e:
         log.debug("Không lấy được dữ liệu phiên đã chốt (lịch sử) cho %s: %s", symbol, e)
 
-    # (2) Dữ liệu HIỆN TẠI (real-time trong phiên) — CHỈ gọi khi đang trong giờ giao dịch, đỡ tốn
-    # request vô ích + giảm rủi ro rate limit ngoài giờ (xem ghi chú sửa lần 2 ngày 29/09/2026).
+    # (2) Dữ liệu HIỆN TẠI (real-time trong phiên).
     #
-    # SỬA THÊM LẦN 3 NGÀY 29/09/2026 (get_securities_summary trả về LIST, không phải 1 object):
-    # Đã kiểm chứng thực tế qua ssi_foreign_flow_debug.py — get_securities_summary(symbol) trả về
-    # kiểu list[SecuritiesSummary], KHÔNG PHẢI 1 object đơn lẻ như tài liệu SDK gợi ý. Code cũ gọi
-    # thẳng _extract_summary_row(list_object) — getattr trên 1 cái list luôn ra rỗng/0 (không lỗi,
-    # không cảnh báo), khiến API "hiện tại" chưa bao giờ thực sự đóng góp dữ liệu. Đã sửa: lấy phần
-    # tử CUỐI của list (nếu có) làm dòng dữ liệu, giống cách xử lý get_securities_summary_historical.
+    # SỬA 30/09/2026 (REST "hiện tại" hoá ra CŨNG trễ ~1 ngày như REST "đã chốt" — đã kiểm chứng
+    # thực tế: chạy giữa phiên sáng, get_securities_summary trả về đúng dữ liệu HÔM QUA, không phải
+    # hôm nay, dù thị trường đang mở cửa và API Key có đủ quyền "All api data"/"All stream data").
+    # REST API của SSI (data-securitiesSummary, data-ohlc...) vốn là dữ liệu TỔNG HỢP THEO LÔ — chỉ
+    # kênh Streaming (WebSocket) mới thực sự real-time. Vì vậy giờ ƯU TIÊN dùng snapshot lấy từ
+    # fetch_live_snapshot_ssi_stream() (chạy 1 lần cho CẢ danh mục trước vòng lặp — xem main()), chỉ
+    # fallback về REST "hiện tại" (biết là có thể trễ) cho những mã KHÔNG có trong snapshot đó (ít
+    # thanh khoản, chưa kịp có tick nào trong cửa sổ nghe, hoặc streaming bị lỗi/tắt).
     live_data = None
-    if _is_vn_trading_hours(now):
+    stream_row = _current_stream_snapshot.get(symbol)
+    if stream_row and stream_row.get("price") is not None:
+        live_data = {
+            "net_val": stream_row.get("net_val"),
+            "net_vol": stream_row.get("net_vol"),
+            "remain_foreign_room": None,
+            "total_foreign_room": None,
+            "foreign_room_pct": stream_row.get("foreign_room_pct"),
+            "close_price": stream_row["price"],
+            "change_pct": None,  # streaming không có sẵn % so với hôm qua — analyze_ticker tự tính
+            "date": pd.Timestamp(now.replace(tzinfo=None)),  # vừa nhận NGAY LƯỢT CHẠY NÀY — chắc chắn là "bây giờ"
+            "total_volume": stream_row.get("total_volume"),
+            "is_stream": True,
+        }
+        # Streaming có tick giá nhưng CHƯA có tick khối ngoại nào trong cửa sổ nghe (mã ít giao dịch
+        # khối ngoại) — ghép tạm phần khối ngoại từ REST "đã chốt" (còn hơn không có gì), giữ nguyên
+        # giá/thời điểm streaming (đáng tin hơn REST).
+        if live_data.get("net_val") is None and close_data:
+            for k in ("net_val", "net_vol", "remain_foreign_room", "total_foreign_room", "foreign_room_pct"):
+                live_data[k] = close_data.get(k)
+    elif _is_vn_trading_hours(now):
+        # Streaming không có dữ liệu cho mã này (tắt/lỗi/mã chưa có tick trong cửa sổ nghe) — dự
+        # phòng bằng REST "hiện tại" như trước đây (biết là có thể trễ 1 ngày, nhưng còn hơn không).
+        #
+        # SỬA NGÀY 29/09/2026 (get_securities_summary trả về LIST, không phải 1 object): đã kiểm
+        # chứng thực tế — trả về list[SecuritiesSummary], KHÔNG PHẢI 1 object đơn lẻ như tài liệu
+        # SDK gợi ý. Lấy phần tử CUỐI của list (nếu có) làm dòng dữ liệu.
         try:
             current = client.market_data.get_securities_summary(symbol)
             current_row = current[-1] if isinstance(current, list) and current else (
@@ -918,26 +1024,44 @@ def analyze_ticker(symbol: str, sector_map: dict = None) -> dict:
     # cùng ohlc_price_for_debug/ohlc_change_pct_debug) KHÔNG bị ghi đè ở đây — giữ nguyên để
     # save_daily_history() dùng lưu lịch sử, tách biệt hẳn với giá hiển thị Telegram.
     price_source = "ohlc"
+    live_volume_override = None  # chỉ có giá trị khi giá đến từ streaming (xem nhánh is_stream)
     if foreign_flow_live and foreign_flow_live.get("close_price"):
         live_price = foreign_flow_live["close_price"]
-        live_date = foreign_flow_live.get("date")
 
-        is_fresh = (
-            live_date is not None and ohlc_date is not None
-            and pd.notna(live_date) and live_date.normalize() >= ohlc_date.normalize()
-        )
-        deviation_pct = abs(live_price - ohlc_price_for_debug) / ohlc_price_for_debug * 100 if ohlc_price_for_debug else None
-        is_sane = deviation_pct is not None and deviation_pct <= LIVE_PRICE_MAX_DEVIATION_PCT
-
-        if is_fresh and is_sane:
+        # SỬA 30/09/2026: giá từ kênh STREAMING (WebSocket) là tick thật nhận trực tiếp trong lượt
+        # chạy này — ĐÁNG TIN NGAY, không cần (và không nên) đối chiếu lệch % với OHLC nữa, vì OHLC
+        # REST cũng bị trễ ~1 ngày (đã kiểm chứng — xem ghi chú lớn ở get_foreign_flow_ssi), nên lấy
+        # nó làm "mốc" để nghi ngờ giá streaming thật trong phiên là sai logic — 1 mã biến động vài %
+        # so với giá đóng cửa HÔM QUA là chuyện bình thường, không phải dữ liệu rác.
+        if foreign_flow_live.get("is_stream"):
             price = live_price
-            price_source = "live"
-            if foreign_flow_live.get("change_pct") is not None:
-                price_change_pct = foreign_flow_live["change_pct"]
+            price_source = "stream"
+            # Streaming không có sẵn field % thay đổi — tự tính so với giá đóng cửa gần nhất mà OHLC
+            # có (ohlc_price_for_debug) — đây chính là mốc chuẩn để tính "% thay đổi trong phiên".
+            if ohlc_price_for_debug:
+                price_change_pct = round((live_price / ohlc_price_for_debug - 1) * 100, 2)
+            if foreign_flow_live.get("total_volume"):
+                live_volume_override = foreign_flow_live["total_volume"]
         else:
-            reason = "không phải phiên mới nhất" if not is_fresh else f"lệch {deviation_pct:.1f}% so với OHLC"
-            log.warning("%s: bỏ qua giá 'live' (%.0f, %s) — dùng giá OHLC (%.0f) thay thế.",
-                        symbol, live_price, reason, ohlc_price_for_debug)
+            # Giá từ REST "hiện tại" (get_securities_summary) — vẫn có thể trễ 1 phiên như REST khác,
+            # nên GIỮ nguyên 2 lớp kiểm tra cũ (mới hơn OHLC + không lệch quá ngưỡng) trước khi tin.
+            live_date = foreign_flow_live.get("date")
+            is_fresh = (
+                live_date is not None and ohlc_date is not None
+                and pd.notna(live_date) and live_date.normalize() >= ohlc_date.normalize()
+            )
+            deviation_pct = abs(live_price - ohlc_price_for_debug) / ohlc_price_for_debug * 100 if ohlc_price_for_debug else None
+            is_sane = deviation_pct is not None and deviation_pct <= LIVE_PRICE_MAX_DEVIATION_PCT
+
+            if is_fresh and is_sane:
+                price = live_price
+                price_source = "live"
+                if foreign_flow_live.get("change_pct") is not None:
+                    price_change_pct = foreign_flow_live["change_pct"]
+            else:
+                reason = "không phải phiên mới nhất" if not is_fresh else f"lệch {deviation_pct:.1f}% so với OHLC"
+                log.warning("%s: bỏ qua giá 'live' (%.0f, %s) — dùng giá OHLC (%.0f) thay thế.",
+                            symbol, live_price, reason, ohlc_price_for_debug)
 
     # Ngày của phiên ĐÃ CHỐT gần nhất — LUÔN lấy theo ngày của nến OHLC (đáng tin, có sẵn ngay
     # trong ngày — đã kiểm chứng qua ssi_foreign_flow_debug.py: get_ohlc_1day_historical CÓ dữ liệu
@@ -976,10 +1100,19 @@ def analyze_ticker(symbol: str, sector_map: dict = None) -> dict:
             if foreign_flow_live and foreign_flow_live.get("date") is not None and pd.notna(foreign_flow_live.get("date"))
             else None
         ),
-        "volume": float(last["volume"]) if pd.notna(last["volume"]) else None,
-        # Giá trị giao dịch ước tính = giá đóng cửa × khối lượng (không có sẵn field "value" riêng
-        # từ nguồn giá đang dùng — đây là cách tính chuẩn phổ biến, đủ chính xác để so sánh/sắp xếp).
-        "trade_value": (price * float(last["volume"])) if pd.notna(last["volume"]) else None,
+        # SỬA 30/09/2026: ưu tiên khối lượng LUỸ KẾ THẬT nhận từ streaming (live_volume_override,
+        # cập nhật liên tục trong phiên) — last["volume"] (OHLC) chỉ đáng tin khi KHÔNG có streaming,
+        # vì OHLC REST cũng bị trễ ~1 ngày (xem ghi chú lớn ở get_foreign_flow_ssi).
+        "volume": (
+            live_volume_override if live_volume_override is not None
+            else (float(last["volume"]) if pd.notna(last["volume"]) else None)
+        ),
+        # Giá trị giao dịch ước tính = giá × khối lượng (không có sẵn field "value" riêng từ nguồn
+        # giá đang dùng — đây là cách tính chuẩn phổ biến, đủ chính xác để so sánh/sắp xếp).
+        "trade_value": (
+            price * live_volume_override if live_volume_override is not None
+            else (price * float(last["volume"])) if pd.notna(last["volume"]) else None
+        ),
         # --- Bộ dữ liệu "ĐÃ CHỐT" của phiên gần nhất — dùng RIÊNG cho lưu lịch sử (save_daily_history),
         # KHÔNG bị ảnh hưởng bởi giá "live" ở trên, để dashboard sau này luôn có đúng 1 điểm dữ liệu/
         # phiên, nhất quán dù bot chạy giờ nào trong ngày (xem ghi chú sửa 29/09/2026).
@@ -1554,6 +1687,15 @@ def main():
 
     sector_map = get_sector_map()  # 1 lần gọi cho cả danh mục, {} nếu lỗi
     market_breadth = get_market_breadth_ssi()  # độ rộng toàn sàn + dòng tiền tự doanh, None nếu không dùng SSI/lỗi
+
+    # SỬA 30/09/2026: mở streaming SSI 1 LẦN cho CẢ danh mục (không phải 1 request/mã như REST) —
+    # xem ghi chú lớn ở ENABLE_SSI_STREAM và get_foreign_flow_ssi. Chỉ làm việc này khi đang THỰC SỰ
+    # trong giờ giao dịch — ngoài giờ, REST "đã chốt" vốn đã đủ dùng và đáng tin (dữ liệu ổn định,
+    # không còn "đang chạy" nữa), không cần mở kết nối streaming tốn thời gian vô ích.
+    global _current_stream_snapshot
+    if RESOLVED_DATA_SOURCE == "ssi" and ENABLE_FOREIGN_FLOW and ENABLE_SSI_STREAM and _is_vn_trading_hours(now_vn()):
+        log.info("Đang mở kết nối Streaming SSI để lấy dữ liệu real-time (nghe %.0fs)...", SSI_STREAM_WAIT_SEC)
+        _current_stream_snapshot = fetch_live_snapshot_ssi_stream(WATCHLIST, SSI_STREAM_WAIT_SEC)
 
     results = []
     for symbol in WATCHLIST:
