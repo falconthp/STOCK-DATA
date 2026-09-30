@@ -13,7 +13,7 @@ requests
 python-dotenv
 matplotlib
 ta
-# ssi_sdk  # <-- điền đúng cách cài bạn đang dùng (ví dụ: git+https://... hoặc đường dẫn .whl)
+ssi-sdk==3.2.1
 
 # Các thư viện mà vnstock/vnai CẦN để chạy (lấy từ "pip show vnstock" ở máy bạn).
 # Những gói này KHÔNG bị PyPI quarantine nên vẫn pip install bình thường được.
