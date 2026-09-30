@@ -48,7 +48,7 @@ jobs:
 
       - name: Chạy bot phân tích
         env:
-          PYTHONPATH: ${{ github.workspace }}/vendor_extracted
+          PYTHONPATH: ${{ github.workspace }}/vendor_extracted/vnstock_vendor
           SSI_CLIENT_ID: ${{ secrets.SSI_CLIENT_ID }}
           SSI_API_KEY: ${{ secrets.SSI_API_KEY }}
           SSI_API_SECRET: ${{ secrets.SSI_API_SECRET }}
