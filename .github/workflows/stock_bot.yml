@@ -63,4 +63,8 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           VALUATION_SOURCE: ${{ secrets.VALUATION_SOURCE }}
+          # Số giây "nghe" streaming SSI để bắt tick giá + khối ngoại trước khi ngắt kết nối.
+          # Mặc định trong code là 25s nếu không khai báo dòng này. Tăng lên (vd 60-90) nếu
+          # muốn bắt được nhiều sự kiện khối ngoại hơn, đổi lại job chạy lâu hơn tương ứng.
+          SSI_STREAM_WAIT_SEC: "60"
         run: python stock_analysis_bot.py
