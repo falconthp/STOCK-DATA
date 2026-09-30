@@ -4624,7 +4624,7 @@
   ],
   "_meta": {
     "year": 2026,
-    "last_updated": "2026-09-30T16:06:49+07:00",
+    "last_updated": "2026-09-30T17:33:09+07:00",
     "data_dictionary": {
       "macro_daily": "1 dòng/phiên (date = ngày phiên đã chốt, không phải ngày chạy bot): vnindex_price/rsi/trend, breadth_up/down (trong danh mục theo dõi), hose_advance/decline/ceiling/floor (toàn sàn HOSE), prop_net_value (tự doanh mua ròng, VNĐ).",
       "sector_flow_daily": "1 dòng/ngành/phiên: count (số mã), inflow_count (số mã dòng tiền vào mạnh), net_val_sum (tổng khối ngoại mua ròng theo ngành, VNĐ), pe_avg/pb_avg (định giá TB ngành).",
