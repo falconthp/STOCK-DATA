@@ -1267,23 +1267,30 @@ def build_report(results: list, macro: dict, market_breadth: dict = None, sector
     if sector_stats is None:
         sector_stats = compute_sector_stats(ok)
 
-    lines = [f"📊 BÁO CÁO PHÂN TÍCH {len(WATCHLIST)} MÃ — {now}", ""]
+    # SỬA 30/09/2026: gom toàn bộ phần vĩ mô (VN-Index, độ rộng toàn sàn, tự doanh, độ rộng danh
+    # mục, chiến lược, stop-loss) vào 1 khối "THỊ TRƯỜNG CHUNG" ngay đầu báo cáo, có tiêu đề rõ
+    # ràng — thay vì các dòng rời rạc trước đây, để người đọc nắm bối cảnh vĩ mô trước khi đọc
+    # từng mã cụ thể. Đồng thời KHÔNG còn để lặng lẽ mất dòng VN-Index khi macro=None (ví dụ do bị
+    # giới hạn tốc độ API) — luôn hiện rõ 1 dòng báo lý do thiếu, tránh gây hiểu lầm là bot lỗi.
+    lines = [f"📊 BÁO CÁO PHÂN TÍCH {len(WATCHLIST)} MÃ — {now}", "", "🌏 VN-INDEX & THỊ TRƯỜNG CHUNG"]
 
     if macro:
         trend_label = {"tang": "TĂNG 📈", "giam": "GIẢM 📉", "di_ngang": "ĐI NGANG ↔️"}[macro["trend"]]
-        lines.append(f"🌏 VN-Index: {macro['price']:,.0f} | RSI {macro['rsi']} | Xu hướng: {trend_label}")
-    lines.append(f"📐 Độ rộng thị trường (trong danh mục): {up} mã tăng / {down} mã giảm / {unchanged} đứng giá")
+        lines.append(f"📈 VN-Index: {macro['price']:,.0f} điểm | RSI {macro['rsi']} | Xu hướng: {trend_label}")
+    else:
+        lines.append("📈 VN-Index: chưa lấy được lúc này (có thể do giới hạn tốc độ API) — các phần bên dưới vẫn đầy đủ.")
     if market_breadth:
         mb = market_breadth
-        lines.append(f"🏛️ Độ rộng toàn sàn HOSE: {mb['advance']} mã tăng / {mb['decline']} mã giảm / {mb['steady']} đứng giá"
-                     f" | Trần: {mb['ceiling']} | Sàn: {mb['floor']}")
+        lines.append(f"🏛️ Độ rộng toàn sàn HOSE: {mb['advance']} tăng / {mb['decline']} giảm / {mb['steady']} đứng giá"
+                     f" | Trần {mb['ceiling']} | Sàn {mb['floor']}")
         prop_net = mb["prop_buy_value"] - mb["prop_sell_value"]
         prop_label = "mua ròng" if prop_net >= 0 else "bán ròng"
         lines.append(f"🏦 Tự doanh CTCK toàn sàn: {prop_label} {abs(prop_net)/1_000_000_000:.1f} tỷ đ")
+    lines.append(f"📐 Độ rộng trong danh mục theo dõi: {up} tăng / {down} giảm / {unchanged} đứng giá")
     lines.append(f"💡 Chiến lược giải ngân gợi ý: {suggest_strategy(macro, len(buy_signals))}")
-    lines.append(f"⛔ Stop-loss áp dụng: -{int(STOP_LOSS_PCT*100)}% từ giá vào\n")
+    lines.append(f"⛔ Stop-loss áp dụng: -{int(STOP_LOSS_PCT*100)}% từ giá vào")
 
-    lines.append(f"🔎 Tín hiệu MUA, xếp theo độ mạnh ({len(buy_signals)}/{len(ok)} mã đạt tiêu chí):")
+    lines.append(f"\n🎯 TÍN HIỆU MUA, xếp theo độ mạnh ({len(buy_signals)}/{len(ok)} mã đạt tiêu chí):")
     if buy_signals:
         for r in buy_signals:
             tags = []
@@ -1302,7 +1309,7 @@ def build_report(results: list, macro: dict, market_breadth: dict = None, sector
 
     if inflow:
         basis_label = "khối ngoại mua ròng" if inflow[0]["money_flow_basis"] == "khoi_ngoai" else f"khối lượng > {VOLUME_SPIKE_RATIO}x TB20 phiên"
-        lines.append(f"\n💰 Dòng tiền vào mạnh (theo {basis_label}, sắp theo giá trị giao dịch):")
+        lines.append(f"\n💰 DÒNG TIỀN VÀO MẠNH (theo {basis_label}, sắp theo giá trị giao dịch):")
         for r in inflow[:8]:
             chg = r["price_change_pct"]
             chg_str = f"{chg:+.1f}%" if chg is not None else "N/A"
@@ -1326,7 +1333,7 @@ def build_report(results: list, macro: dict, market_breadth: dict = None, sector
                     parts.append(f"{s} ({st['inflow_count']} mã)")
             lines.append(f"   🏭 Ngành hút dòng tiền mạnh nhất: {', '.join(parts)}")
 
-    lines.append("\n📌 Mã ưu tiên theo dõi:")
+    lines.append("\n📌 MÃ ƯU TIÊN THEO DÕI:")
     for r in ok:
         if r["ticker"] in PRIORITY_TICKERS:
             chg = r["price_change_pct"]
