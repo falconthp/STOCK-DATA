@@ -89,40 +89,52 @@ GEMINI_PROMPT = os.getenv("GEMINI_PROMPT", (
     "trường hôm nay — KHÔNG PHẢI viết báo cáo phân tích trang trọng kiểu chuyên gia/ngân hàng đầu tư. "
     "Dựa vào dữ liệu JSON trong file đính kèm, hãy PHÂN TÍCH VÀ ĐƯA RA NHẬN ĐỊNH/KHUYẾN NGHỊ CỤ THỂ "
     "bằng tiếng Việt — đây là yêu cầu QUAN TRỌNG NHẤT, không được chỉ liệt kê số liệu thô mà không có "
-    "đánh giá đi kèm. Gồm 4 phần:\n"
-    "1) Các mã có tín hiệu mua tốt dựa trên xu hướng giá và dòng tiền khối ngoại (securities_summary) "
-    "— với MỖI mã nêu ra, sau khi liệt kê số liệu PHẢI có thêm 1 câu NHẬN ĐỊNH riêng giải thích TẠI "
-    "SAO đây là tín hiệu tốt (ví dụ: tăng giá kèm khối ngoại mua ròng liên tục nhiều phiên là dấu "
-    "hiệu dòng tiền lớn đang gom hàng, khác với tăng giá đơn thuần do đầu cơ ngắn hạn);\n"
-    "2) Mã nào có room khối ngoại (remain_foreign_room/total_foreign_room) gần hết — kèm nhận định "
-    "room cạn có ý nghĩa gì với khả năng khối ngoại mua thêm/định giá mã đó;\n"
-    "3) Nhận định xu hướng chung dựa trên market_index_summary (độ rộng toàn sàn, dòng tiền tự doanh, "
-    "biến động VN-Index) — thị trường đang tích cực/tiêu cực/giằng co, dòng tiền tự doanh đang mua "
-    "ròng hay bán ròng và nói lên điều gì;\n"
-    "4) BẮT BUỘC kết thúc bằng 1 đoạn 'KẾT LUẬN' ngắn (3-5 câu): tổng hợp lại toàn bộ 3 phần trên "
-    "thành 1 nhận định chung về trạng thái thị trường hôm nay và gợi ý chiến lược giải ngân/quan sát "
-    "phù hợp (ví dụ: nên giải ngân thăm dò, nên đứng ngoài quan sát, nên chốt lời một phần...). Đây "
-    "KHÔNG phải khuyến nghị đầu tư cá nhân hóa, chỉ là góc nhìn tham khảo dựa trên dữ liệu.\n"
+    "đánh giá đi kèm. BẮT BUỘC trình bày theo ĐÚNG THỨ TỰ 4 phần sau, MỖI phần bắt đầu bằng 1 dòng "
+    "TIÊU ĐỀ CÓ EMOJI y hệt mẫu bên dưới (không đổi chữ, không bỏ tiêu đề) để người đọc biết ngay đang "
+    "xem phần gì và mã được liệt kê theo tiêu chí nào:\n"
+    "\n"
+    "PHẦN 1 — tiêu đề đúng '📊 VN-INDEX & THỊ TRƯỜNG CHUNG': lấy từ market_index_summary (dòng mới "
+    "nhất), nêu chỉ số VN-Index, tăng/giảm bao nhiêu điểm và %, độ rộng (số mã tăng/giảm/đứng giá), "
+    "dòng tiền tự doanh mua/bán ròng. Sau đó 1 câu nhận định ngắn: thị trường đang tích cực/tiêu "
+    "cực/giằng co và vì sao.\n"
+    "\n"
+    "PHẦN 2 — tiêu đề đúng '🎯 MÃ CÓ TÍN HIỆU MUA TỐT (giá tăng + khối ngoại mua ròng)': chọn tối đa "
+    "3-4 mã có xu hướng giá tốt kèm khối ngoại mua ròng rõ trong securities_summary. Với MỖI mã, sau "
+    "khi liệt kê số liệu PHẢI có thêm 1 câu NHẬN ĐỊNH riêng giải thích TẠI SAO đây là tín hiệu tốt "
+    "(ví dụ: tăng giá kèm khối ngoại mua ròng liên tục nhiều phiên là dấu hiệu dòng tiền lớn đang gom "
+    "hàng, khác với tăng giá đơn thuần do đầu cơ ngắn hạn).\n"
+    "\n"
+    "PHẦN 3 — tiêu đề đúng '🔒 MÃ ROOM KHỐI NGOẠI SẮP/ĐÃ CẠN': chọn tối đa 3-4 mã có "
+    "remain_foreign_room/total_foreign_room thấp nhất (ưu tiên mã room = 0 hoặc gần 0) trong "
+    "securities_summary. Với MỖI mã, kèm 1 câu nhận định room cạn có ý nghĩa gì với khả năng khối "
+    "ngoại mua thêm/định giá mã đó.\n"
+    "\n"
+    "PHẦN 4 — tiêu đề đúng '🏁 KẾT LUẬN': tổng hợp lại toàn bộ 3 phần trên thành 1 đoạn ngắn (tối đa "
+    "3 câu, KHÔNG lặp lại số liệu đã nêu ở trên) — 1 câu chốt xu hướng chung, 1 câu gợi ý nên làm gì "
+    "(ví dụ: nên giải ngân thăm dò, nên đứng ngoài quan sát, nên chốt lời một phần...). Đây KHÔNG "
+    "phải khuyến nghị đầu tư cá nhân hóa, chỉ là góc nhìn tham khảo dựa trên dữ liệu.\n"
     "\n\nYÊU CẦU BẮT BUỘC VỀ NGÔN NGỮ VÀ ĐỊNH DẠNG (vì nội dung này gửi qua Telegram dạng chữ thường):\n"
-    "- VĂN PHONG: viết ĐỜI THƯỜNG, BÌNH DÂN, như đang nhắn tin cho bạn bè — TUYỆT ĐỐI TRÁNH các cụm từ "
-    "sáo rỗng kiểu báo cáo tài chính/chuyên gia phân tích như 'phản ánh lực cầu chủ động', 'tích lũy "
-    "mạnh tay cho mục tiêu trung hạn', 'cấu trúc xu hướng chưa bị phá vỡ', 'dòng vốn tổ chức quốc tế "
-    "đánh giá cao vùng định giá'... Thay vào đó nói thẳng, ngắn gọn, dễ hiểu như đang giải thích miệng: "
-    "ví dụ 'giá tăng mà khối ngoại vẫn gom đều — có vẻ dòng tiền lớn đang mua thật, không phải lướt "
-    "sóng' thay vì câu chữ hoa mỹ dài dòng.\n"
+    "- 4 dòng TIÊU ĐỀ của 4 phần ở trên PHẢI giữ NGUYÊN VĂN như đã cho (kể cả emoji) — đây là quy tắc "
+    "trình bày, KHÔNG tính là 'văn phong trang trọng' cần tránh.\n"
+    "- Ngoài 4 tiêu đề đó ra, phần NỘI DUNG/NHẬN ĐỊNH bên trong mỗi phần: viết ĐỜI THƯỜNG, BÌNH DÂN, "
+    "như đang nhắn tin cho bạn bè — TUYỆT ĐỐI TRÁNH các cụm từ sáo rỗng kiểu báo cáo tài chính/chuyên "
+    "gia phân tích như 'phản ánh lực cầu chủ động', 'tích lũy mạnh tay cho mục tiêu trung hạn', 'cấu "
+    "trúc xu hướng chưa bị phá vỡ', 'dòng vốn tổ chức quốc tế đánh giá cao vùng định giá'... Thay vào "
+    "đó nói thẳng, ngắn gọn, dễ hiểu như đang giải thích miệng: ví dụ 'giá tăng mà khối ngoại vẫn gom "
+    "đều — có vẻ dòng tiền lớn đang mua thật, không phải lướt sóng' thay vì câu chữ hoa mỹ dài dòng.\n"
     "- MỖI câu Nhận định chỉ 1 câu NGẮN (dưới 25 từ), đi thẳng vào ý, không vòng vo.\n"
     "- Viết tiếng Việt CÓ DẤU ĐẦY ĐỦ, đúng chính tả (ví dụ 'tín hiệu mua tốt', KHÔNG viết 'tin hieu mua tot'). "
     "TUYỆT ĐỐI không được bỏ dấu tiếng Việt dưới bất kỳ hình thức nào.\n"
     "- TUYỆT ĐỐI KHÔNG dùng cú pháp Markdown (không #, ##, không **chữ đậm**, không gạch ngang ---) "
-    "và KHÔNG dùng công thức LaTeX (không $$...$$). Chỉ dùng chữ thường, xuống dòng, và emoji "
-    "(ví dụ 📈 📉 ⚠️ ✅) để phân đoạn.\n"
-    "- TUYỆT ĐỐI KHÔNG đánh số thứ tự hay chữ cái trước mỗi mã/mục (KHÔNG viết '1.', 'a,', 'b,', '-', "
-    "'*' ở đầu dòng). Bắt đầu mỗi mã trực tiếp bằng tên mã, ví dụ đúng: 'VCH: tăng 3,25%...' — KHÔNG "
-    "viết 'a, VCH' hay '1) VCH'.\n"
+    "và KHÔNG dùng công thức LaTeX (không $$...$$). Chỉ dùng chữ thường, xuống dòng, và emoji để "
+    "phân đoạn.\n"
+    "- TUYỆT ĐỐI KHÔNG đánh số thứ tự hay chữ cái trước mỗi mã (KHÔNG viết '1.', 'a,', 'b,', '-', '*' "
+    "ở đầu dòng tên mã). Sau dòng tiêu đề mỗi phần, bắt đầu mỗi mã trực tiếp bằng tên mã, ví dụ đúng: "
+    "'VCH' rồi xuống dòng liệt kê số liệu — KHÔNG viết 'a, VCH' hay '1) VCH'.\n"
     "- Mã cổ phiếu LUÔN viết IN HOA (ví dụ VCH, BSR, VTP) — KHÔNG viết thường (vch, bsr, vtp).\n"
     "- Với MỖI mã, trình bày mỗi số liệu trên MỘT DÒNG RIÊNG, có emoji nhỏ đầu dòng để dễ quét mắt "
-    "(💵 cho giá, 💰 cho khối ngoại mua/bán ròng, 🌐 cho room khối ngoại) — KHÔNG viết thành đoạn văn "
-    "dài dồn nhiều số liệu vào 1 câu. Ví dụ đúng:\n"
+    "(💵 cho giá, 💰 cho khối ngoại mua/bán ròng, 🌐 cho room khối ngoại, 👉 cho câu nhận định) — KHÔNG "
+    "viết thành đoạn văn dài dồn nhiều số liệu vào 1 câu. Ví dụ đúng cho 1 mã ở PHẦN 2:\n"
     "  VCH\n"
     "  💵 Giá: 146.000đ (+0,48%)\n"
     "  💰 Khối ngoại mua ròng: 2,6 tỷ đồng\n"
@@ -130,14 +142,11 @@ GEMINI_PROMPT = os.getenv("GEMINI_PROMPT", (
     "- Số tiền từ 1 triệu đồng trở lên PHẢI đổi sang đơn vị 'triệu đồng' hoặc 'tỷ đồng' (ví dụ 2807340000 "
     "phải viết là '2,8 tỷ đồng'), TUYỆT ĐỐI không viết số dài nguyên như 2807340000. Giá cổ phiếu và số "
     "cổ phiếu dùng dấu chấm phân cách nghìn (ví dụ 146.000đ, 19.200 cổ phiếu).\n"
-    "- Mỗi phần chỉ nêu tối đa 3-4 mã tiêu biểu nhất, không cần liệt kê hết toàn bộ danh sách.\n"
-    "- Phần KẾT LUẬN cũng viết ngắn gọn, đời thường, tối đa 3 câu — không lặp lại số liệu đã nêu ở "
-    "trên, chỉ chốt lại 1 câu về xu hướng chung + 1 câu gợi ý nên làm gì.\n"
     "- Với mỗi mã nêu ra, PHẢI trích số liệu CỤ THỂ thật lấy đúng từ file dữ liệu — không suy diễn hay "
     "dùng kiến thức chung về mã đó nếu số liệu không có trong file. Câu NHẬN ĐỊNH thì được phép suy luận "
     "hợp lý dựa trên số liệu đó, nhưng phải bám sát dữ liệu thật, không bịa thêm thông tin ngoài file. "
-    "Nếu một phần không có dữ liệu phù hợp, chỉ cần viết ngắn gọn 'không có dữ liệu phần này', không "
-    "giải thích dài dòng."
+    "Nếu một phần không có dữ liệu phù hợp, vẫn giữ dòng tiêu đề rồi viết ngắn gọn 'không có dữ liệu "
+    "phần này', không giải thích dài dòng."
 )).strip()
 # Gửi kết quả Gemini qua Telegram — dùng lại đúng TELEGRAM_BOT_TOKEN/CHAT_ID trong .env (nếu có)
 SEND_GEMINI_TO_TELEGRAM = os.getenv("SEND_GEMINI_TO_TELEGRAM", "false").lower() == "true"
@@ -523,11 +532,22 @@ def main():
             analysis = analyze_with_gemini(gemini_path)
             if analysis:
                 analysis = _sanitize_for_telegram(analysis)
+                # SỬA 30/09/2026: thêm dòng thời gian ở ĐẦU bằng code (không nhờ Gemini tự ghi, để
+                # đảm bảo chính xác) — gồm ngày của phiên dữ liệu mới nhất (lấy từ market_index_summary,
+                # phòng khi chạy sau giờ đóng cửa thì đây là phiên vừa chốt) và giờ thực tế script chạy.
+                latest_session = None
+                if df_breadth is not None and not df_breadth.empty and "date" in df_breadth.columns:
+                    latest_session = str(df_breadth.sort_values("date")["date"].iloc[-1])
+                header_lines = [f"⏰ Chạy lúc: {datetime.now().strftime('%H:%M %d/%m/%Y')}"]
+                if latest_session:
+                    header_lines.append(f"📅 Dữ liệu phiên: {latest_session}")
+                header = "\n".join(header_lines)
+                analysis_with_header = f"🤖 Phân tích từ Gemini\n{header}\n\n{analysis}"
                 print("\n===== PHÂN TÍCH TỪ GEMINI =====\n")
-                print(analysis)
+                print(analysis_with_header)
                 print("\n================================\n")
                 if SEND_GEMINI_TO_TELEGRAM:
-                    send_telegram_text(f"🤖 Phân tích từ Gemini:\n\n{analysis}")
+                    send_telegram_text(analysis_with_header)
             else:
                 log.warning("Không lấy được phân tích từ Gemini — kiểm tra GEMINI_API_KEY hoặc log lỗi phía trên.")
     else:
