@@ -17,6 +17,9 @@ ta
 
 # Các thư viện mà vnstock/vnai CẦN để chạy (lấy từ "pip show vnstock" ở máy bạn).
 # Những gói này KHÔNG bị PyPI quarantine nên vẫn pip install bình thường được.
+# LƯU Ý: vnstock_ezchart KHÔNG khai báo ở đây vì bản thân nó khai "cần vnstock" trong
+# metadata, khiến pip cố giải quyết luôn cả vnstock (đang bị khóa) và báo lỗi xung đột.
+# Nó được cài riêng ở bước "pip install --no-deps vnstock_ezchart" trong workflow.
 beautifulsoup4
 importlib-metadata
 openpyxl
@@ -26,4 +29,5 @@ pydantic
 pytz
 seaborn
 tenacity
-vnstock_ezchart
+squarify
+wordcloud
