@@ -184,6 +184,12 @@ DEFAULT_WATCHLIST = (
 )
 WATCHLIST = [t.strip().upper() for t in os.getenv("WATCHLIST", DEFAULT_WATCHLIST).split(",") if t.strip()]
 PRIORITY_TICKERS = [t.strip().upper() for t in os.getenv("PRIORITY_TICKERS", "VTP,CTR").split(",") if t.strip()]
+# SỬA 30/09/2026: mã trong PRIORITY_TICKERS nhưng chưa có trong WATCHLIST sẽ được tự động
+# thêm vào WATCHLIST để bot vẫn quét/phân tích được — người dùng chỉ cần sửa PRIORITY_TICKERS,
+# không cần khai trùng mã ở cả 2 nơi nữa.
+for _t in PRIORITY_TICKERS:
+    if _t not in WATCHLIST:
+        WATCHLIST.append(_t)
 
 RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", "60"))
 SELL_RSI_THRESHOLD = float(os.getenv("SELL_RSI_THRESHOLD", "40"))
