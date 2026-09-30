@@ -1,9 +1,29 @@
-numpy>=2.3.2
-pandas>=2.2.3,<3.0
-vnstock>=4.0.2
-ta>=0.11.0
-requests>=2.31.0
-python-dotenv>=1.0.0
-matplotlib>=3.8.0
-ssi-sdk>=1.0.0
-google-genai>=0.1.0
+# Gợi ý dựa trên các thư viện mà stock_analysis_bot.py đang import.
+# QUAN TRỌNG: hãy đối chiếu với requirements.txt bạn đang dùng ở máy (E:\Claude\Stok 4 ssi)
+# và ghi đúng version bạn đã test ổn định, đặc biệt là ssi_sdk (SDK riêng của SSI,
+# có thể bạn đang cài từ file .whl hoặc git riêng chứ không phải PyPI công khai).
+#
+# LƯU Ý (30/09/2026): vnstock và vnai đang bị PyPI "quarantine" (không pip install được
+# từ PyPI cho tới khi PyPI rà soát xong) -> KHÔNG khai báo 2 gói này ở đây. Thay vào đó,
+# workflow GitHub Actions sẽ giải nén bản đã cài sẵn (vnstock_vendor.zip) và trỏ PYTHONPATH
+# vào đó thay vì pip install. Khi nào PyPI gỡ quarantine, có thể bỏ phần vendor và thêm lại
+# "vnstock==4.0.2" + "vnai" vào đây như bình thường.
+pandas
+requests
+python-dotenv
+matplotlib
+ta
+# ssi_sdk  # <-- điền đúng cách cài bạn đang dùng (ví dụ: git+https://... hoặc đường dẫn .whl)
+
+# Các thư viện mà vnstock/vnai CẦN để chạy (lấy từ "pip show vnstock" ở máy bạn).
+# Những gói này KHÔNG bị PyPI quarantine nên vẫn pip install bình thường được.
+beautifulsoup4
+importlib-metadata
+openpyxl
+packaging
+psutil
+pydantic
+pytz
+seaborn
+tenacity
+vnstock_ezchart
