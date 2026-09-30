@@ -141,7 +141,16 @@ import smtplib
 import concurrent.futures
 from io import BytesIO
 from email.mime.text import MIMEText
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+# Múi giờ Việt Nam (UTC+7) — dùng để hiển thị thời gian trong báo cáo/email/log commit,
+# vì máy chủ chạy bot (ví dụ GitHub Actions) mặc định dùng giờ UTC, không phải giờ VN.
+VN_TZ = timezone(timedelta(hours=7))
+
+
+def now_vn() -> datetime:
+    """Trả về thời điểm hiện tại theo giờ Việt Nam (UTC+7), dùng cho mọi chỗ HIỂN THỊ thời gian."""
+    return datetime.now(VN_TZ)
 
 import pandas as pd
 import requests
@@ -1090,7 +1099,7 @@ def compute_closing_sector_stats(ok: list) -> dict:
 
 
 def build_report(results: list, macro: dict, market_breadth: dict = None, sector_stats: dict = None) -> str:
-    now = datetime.now().strftime("%H:%M %d/%m/%Y")
+    now = now_vn().strftime("%H:%M %d/%m/%Y")
     ok = [r for r in results if r]
     buy_signals = sorted([r for r in ok if r["is_buy_signal"]], key=lambda x: x["signal_score"], reverse=True)
     # SỬA 28-29/09/2026: sắp theo GIÁ TRỊ giao dịch (giá × khối lượng, đơn vị VNĐ) thay vì
@@ -1236,7 +1245,7 @@ def _push_github_json(data: dict, repo_path: str, sha: str = None) -> bool:
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{repo_path}"
     content_b64 = base64.b64encode(json.dumps(data, ensure_ascii=False, default=str, indent=2).encode("utf-8")).decode("utf-8")
     body = {
-        "message": f"Cập nhật lịch sử bot — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "message": f"Cập nhật lịch sử bot — {now_vn().strftime('%Y-%m-%d %H:%M')} (giờ VN)",
         "content": content_b64,
         "branch": GITHUB_BRANCH,
     }
@@ -1294,7 +1303,7 @@ def save_daily_history(results: list, macro: dict, market_breadth: dict, sector_
         log.info("Chưa cấu hình GITHUB_TOKEN/GITHUB_REPO — bỏ qua lưu lịch sử lên GitHub.")
         return
 
-    now = datetime.now()
+    now = now_vn()
     ok = [r for r in results if r and r.get("close_date")]
     if not ok:
         log.warning("Không có mã nào xác định được ngày phiên đã chốt (close_date) — bỏ qua lưu lịch sử lần này.")
@@ -1570,7 +1579,7 @@ def main():
         send_telegram_photo(chart, caption="📊 Tổng quan thị trường & tín hiệu MUA")
 
     send_telegram(report)
-    send_email(f"Báo cáo phân tích cổ phiếu {datetime.now().strftime('%H:%M %d/%m/%Y')}", report)
+    send_email(f"Báo cáo phân tích cổ phiếu {now_vn().strftime('%H:%M %d/%m/%Y')}", report)
     save_daily_history(results, macro, market_breadth, sector_stats)
     _save_valuation_cache()
     log.info("Hoàn tất.")
