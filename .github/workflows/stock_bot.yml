@@ -81,5 +81,5 @@ jobs:
           # ngoại, tín hiệu MUA/BÁN riêng). Viết mã in hoa, cách nhau bằng dấu phẩy, KHÔNG dấu
           # cách sau dấu phẩy. LƯU Ý: mã ở đây PHẢI có mặt trong WATCHLIST ở trên thì mới có
           # dữ liệu để hiện phần "Mã ưu tiên theo dõi" trong báo cáo.
-          PRIORITY_TICKERS: "VTP,CTR"
+          PRIORITY_TICKERS: "DCM,TCX,VTP,CTR,VGI"
         run: python stock_analysis_bot.py
