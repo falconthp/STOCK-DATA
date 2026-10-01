@@ -59,10 +59,10 @@ BOOT_VOLUME_GB = float(os.getenv("OCI_BOOT_VOLUME_GB", "50"))
 # RETRY_INTERVAL_SEC tăng lên 60s bên dưới, vẫn giữ được ~10 lần thử/lượt chạy nhưng dãn tần suất
 # gọi API ra, AN TOÀN HƠN cho tài khoản (tránh bị Oracle coi là gọi API dồn dập/bất thường).
 MAX_DURATION_SEC = int(os.getenv("MAX_DURATION_SEC", "600"))
-# SỬA 01/10/2026: tăng từ 20s lên 60s — 20s là hơi dồn dập cho 1 API tạo tài nguyên (khác với API
-# chỉ đọc dữ liệu), nhiều người dùng cộng đồng khuyến nghị tối thiểu 60s/lần gọi LaunchInstance để
-# tránh bị Oracle gắn cờ là spam/lạm dụng (ngoài việc dễ bị 429 Too Many Requests).
-RETRY_INTERVAL_SEC = int(os.getenv("RETRY_INTERVAL_SEC", "60"))
+# SỬA 01/10/2026 (lần 2): 60s vẫn dính 429 khá thường xuyên trên thực tế (log thật cho thấy cứ
+# cách 1 lần lại bị 429) — tăng tiếp lên 120s/lần cho an toàn hơn, đổi lại mỗi lượt chạy (600s) còn
+# ~5 lần thử thay vì ~10, nhưng ít bị Oracle giới hạn tốc độ/gắn cờ hơn.
+RETRY_INTERVAL_SEC = int(os.getenv("RETRY_INTERVAL_SEC", "120"))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -81,14 +81,47 @@ def send_telegram(message: str):
         log.error("Lỗi khi gửi Telegram: %s", e)
 
 
+def _normalize_pem(raw: str) -> str:
+    """SỬA 01/10/2026: gặp lỗi 'InvalidPrivateKey ... MalformedFraming' trên GitHub Actions — do nội
+    dung dán vào secret OCI_PRIVATE_KEY bị MẤT XUỐNG DÒNG thật (ví dụ dán qua ô chỉ nhận 1 dòng, hoặc
+    bị thay bằng ký tự '\\n' chữ thay vì xuống dòng thật '\n') — PEM BẮT BUỘC phải có xuống dòng thật
+    giữa các dòng base64 thì thư viện cryptography mới đọc được. Hàm này tự dò và sửa 2 kiểu lỗi phổ
+    biến nhất:
+      1. Toàn bộ nội dung dính thành 1 dòng, có chứa ký tự '\\n' (backslash + n) thay vì xuống dòng
+         thật — thay literal '\\n' bằng xuống dòng thật.
+      2. Xuống dòng kiểu Windows (\r\n) — chuẩn hoá về \n.
+    KHÔNG tự "sửa" được nếu bạn dán thiếu hẳn 1 phần nội dung key — trường hợp đó phải tải lại/dán
+    lại key cho đủ, script chỉ báo rõ lỗi để bạn biết hướng xử lý."""
+    text = raw.strip()
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" not in text and "\\n" in text:
+        text = text.replace("\\n", "\n")
+    return text.strip() + "\n"
+
+
 def get_oci_config() -> dict:
     """SỬA: GitHub Actions không có sẵn file ~/.oci/config như máy cá nhân — OCI SDK bắt buộc cần
     1 FILE private key thật trên đĩa (không nhận nội dung PEM trực tiếp qua config dict ở 1 số
     phiên bản SDK cũ), nên ghi tạm nội dung OCI_PRIVATE_KEY ra 1 file trong thư mục tạm rồi trỏ
     key_file vào đó."""
+    key_content = _normalize_pem(OCI_PRIVATE_KEY)
+    lines = key_content.strip().split("\n")
+    first_line, last_line = lines[0] if lines else "", lines[-1] if lines else ""
+    log.info("Kiểm tra định dạng OCI_PRIVATE_KEY — dòng đầu: '%s' | dòng cuối: '%s' | số dòng: %d",
+              first_line, last_line, len(lines))
+    if not first_line.startswith("-----BEGIN") or not last_line.startswith("-----END"):
+        log.error("OCI_PRIVATE_KEY KHÔNG đúng định dạng PEM (thiếu dòng -----BEGIN...-----/-----END...-----). "
+                   "Kiểm tra lại: đã copy ĐỦ TOÀN BỘ nội dung file .pem (kể cả 2 dòng BEGIN/END) chưa, "
+                   "dán bằng Notepad/VSCode (KHÔNG dùng Word), không có dấu ngoặc kép bọc ngoài.")
+        send_telegram("❌ Script tạo VM Oracle dừng vì OCI_PRIVATE_KEY sai định dạng PEM — kiểm tra lại secret, dán lại đủ nội dung file .pem.")
+        sys.exit(1)
+    if len(lines) < 3:
+        log.error("OCI_PRIVATE_KEY chỉ có %d dòng — PEM hợp lệ thường có nhiều dòng base64 ở giữa "
+                   "BEGIN/END. Khả năng cao nội dung bị dồn hết thành 1-2 dòng khi dán vào secret — "
+                   "dán lại trực tiếp từ file .pem gốc, KHÔNG qua ô chỉ nhận 1 dòng văn bản.", len(lines))
     key_path = os.path.join(tempfile.gettempdir(), "oci_api_key.pem")
     with open(key_path, "w") as f:
-        f.write(OCI_PRIVATE_KEY.strip() + "\n")
+        f.write(key_content)
     os.chmod(key_path, 0o600)
     return {
         "user": OCI_USER_OCID,
