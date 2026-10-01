@@ -1,0 +1,57 @@
+name: OCI Auto Retry Create VM (Free Tier ARM)
+
+# Tự động dò + tạo VM Free Tier ARM (VM.Standard.A1.Flex) mỗi khi Oracle có chỗ trống.
+# LƯU Ý QUAN TRỌNG: GitHub Actions KHÔNG đảm bảo chạy đúng tần suất/giờ đã đặt (có thể trễ vài
+# đến chục phút vào giờ cao điểm) — cơ hội "bắt được chỗ trống" sẽ THẤP HƠN nhiều so với chạy
+# script này liên tục 24/7 trên 1 máy luôn bật. Vẫn dùng được, chỉ là tỉ lệ thành công thấp hơn.
+# Mỗi lần workflow chạy, script tự thử lặp lại nhiều lần trong ~10 phút (xem MAX_DURATION_SEC
+# trong oci_auto_retry.py), cách nhau 60s/lần — AN TOÀN hơn cho tài khoản so với bản đầu (20s/lần,
+# dễ bị Oracle coi là gọi API dồn dập). Script TỰ NHẬN RA khi đã tạo được VM (instance_already_exists)
+# và bỏ qua ngay từ đầu job — không cần tắt lịch cron thủ công, nhưng job vẫn được cron kích hoạt
+# đều đặn (chỉ chạy vài giây rồi thoát, không tốn thêm phút Actions/API đáng kể).
+on:
+  schedule:
+    # SỬA 01/10/2026: giãn từ 15 phút lên 20 phút/lần, cộng với RETRY_INTERVAL_SEC tăng lên 60s —
+    # giảm tổng số lần gọi API LaunchInstance/ngày, an toàn hơn cho tài khoản.
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+jobs:
+  try-create-vm:
+    runs-on: ubuntu-latest
+    # Đặt dư ra 2 phút so với MAX_DURATION_SEC=600s (10 phút) để không bị Actions tự ngắt giữa chừng.
+    timeout-minutes: 12
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cài thư viện
+        run: pip install oci requests
+
+      - name: Dò và tạo VM
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          # Dán NGUYÊN VĂN nội dung file .pem (bao gồm cả dòng -----BEGIN/END PRIVATE KEY-----)
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_SUBNET_OCID: ${{ secrets.OCI_SUBNET_OCID }}
+          OCI_IMAGE_OCID: ${{ secrets.OCI_IMAGE_OCID }}
+          OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+          OCI_INSTANCE_NAME: "falconthp-vm-bot"
+          OCI_OCPUS: "4"
+          OCI_MEMORY_GB: "24"
+          OCI_BOOT_VOLUME_GB: "50"
+          MAX_DURATION_SEC: "600"
+          RETRY_INTERVAL_SEC: "60"
+          # Dùng lại đúng secret Telegram đã có sẵn từ 2 bot kia, để báo ngay khi tạo VM thành công.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python oci_auto_retry.py
