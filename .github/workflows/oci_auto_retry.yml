@@ -50,7 +50,10 @@ jobs:
           OCI_MEMORY_GB: "24"
           OCI_BOOT_VOLUME_GB: "50"
           MAX_DURATION_SEC: "600"
-          RETRY_INTERVAL_SEC: "60"
+          # SỬA 01/10/2026: 60s vẫn dính 429 (giới hạn tốc độ) khá thường xuyên với riêng API
+          # LaunchInstance — tăng lên 120s/lần cho an toàn hơn, đổi lại mỗi lượt chạy còn ~5 lần thử
+          # (thay vì ~10) trong cùng 600s.
+          RETRY_INTERVAL_SEC: "120"
           # Dùng lại đúng secret Telegram đã có sẵn từ 2 bot kia, để báo ngay khi tạo VM thành công.
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
