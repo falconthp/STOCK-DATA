@@ -586,6 +586,15 @@ def get_market_breadth_ssi() -> dict:
             "prop_buy_value": float(s.total_prop_buy_value or 0),
             "prop_sell_value": float(s.total_prop_sell_value or 0),
             "total_match_value": float(s.total_match_value or 0),
+            # SỬA 01/10/2026: API này VỐN ĐÃ trả sẵn giá trị + biến động VN-Index (index_value,
+            # index_change, index_change_percent) — trước đây không lấy ra, khiến bot phải gọi
+            # RIÊNG qua vnstock (get_macro_context) chỉ để lấy đúng 3 số này, mà vnstock ở gói
+            # miễn phí hay bị giới hạn tốc độ (đặc biệt chạy trên GitHub Actions, dùng chung dải IP
+            # với nhiều người khác). Lấy luôn ở đây để dùng làm PHƯƠNG ÁN DỰ PHÒNG — không cần RSI
+            # (không tính được xu hướng/chiến lược từ đây), nhưng ít nhất có số liệu thay vì trống.
+            "index_value": float(s.index_value) if s.index_value is not None else None,
+            "index_change": float(s.index_change) if s.index_change is not None else None,
+            "index_change_percent": float(s.index_change_percent) if s.index_change_percent is not None else None,
         }
     except Exception as e:
         log.debug("Không lấy được độ rộng toàn sàn từ SSI: %s", e)
@@ -1277,6 +1286,16 @@ def build_report(results: list, macro: dict, market_breadth: dict = None, sector
     if macro:
         trend_label = {"tang": "TĂNG 📈", "giam": "GIẢM 📉", "di_ngang": "ĐI NGANG ↔️"}[macro["trend"]]
         lines.append(f"📈 VN-Index: {macro['price']:,.0f} điểm | RSI {macro['rsi']} | Xu hướng: {trend_label}")
+    elif market_breadth and market_breadth.get("index_value") is not None:
+        # SỬA 01/10/2026: vnstock (nguồn chính cho RSI/xu hướng) đang bị giới hạn tốc độ —
+        # dùng tạm giá trị + biến động VN-Index có sẵn từ SSI (cùng API đã lấy độ rộng toàn sàn
+        # bên dưới) làm phương án dự phòng. KHÔNG có RSI/xu hướng ở đây (cần chuỗi lịch sử, SSI
+        # endpoint này chỉ trả 1 ngày/lần) nên chỉ hiện giá trị + % thay đổi, ghi rõ là dữ liệu dự
+        # phòng để không gây hiểu nhầm là đã tính xu hướng.
+        mb0 = market_breadth
+        chg_sign = "+" if (mb0["index_change"] or 0) >= 0 else ""
+        lines.append(f"📈 VN-Index: {mb0['index_value']:,.2f} điểm ({chg_sign}{mb0['index_change']:,.2f} / "
+                     f"{chg_sign}{mb0['index_change_percent']:.2f}%) [nguồn dự phòng SSI — chưa có RSI/xu hướng do vnstock bị giới hạn tốc độ]")
     else:
         lines.append("📈 VN-Index: chưa lấy được lúc này (có thể do giới hạn tốc độ API) — các phần bên dưới vẫn đầy đủ.")
     if market_breadth:
