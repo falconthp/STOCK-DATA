@@ -930,8 +930,19 @@ def get_macro_context() -> dict:
             trend = "giam"
         else:
             trend = "di_ngang"
+        # SỬA 02/10/2026: thêm mức tăng/giảm điểm + % so với phiên trước (df đã có đủ lịch sử
+        # 100 ngày nên luôn có dòng trước đó để so sánh, trừ trường hợp hi hữu chỉ có 1 dòng).
+        change = None
+        change_percent = None
+        if len(df) >= 2:
+            prev_close = float(df.iloc[-2]["close"])
+            if prev_close:
+                change = float(last["close"]) - prev_close
+                change_percent = change / prev_close * 100
         return {"price": float(last["close"]), "rsi": round(float(last["rsi"]), 1),
-                "macd_diff": round(float(last["macd_diff"]), 2), "trend": trend}
+                "macd_diff": round(float(last["macd_diff"]), 2), "trend": trend,
+                "change": round(change, 2) if change is not None else None,
+                "change_percent": round(change_percent, 2) if change_percent is not None else None}
     except Exception as e:
         log.warning("Không lấy được dữ liệu VN-Index để đánh giá vĩ mô: %s", e)
         return None
@@ -1285,7 +1296,14 @@ def build_report(results: list, macro: dict, market_breadth: dict = None, sector
 
     if macro:
         trend_label = {"tang": "TĂNG 📈", "giam": "GIẢM 📉", "di_ngang": "ĐI NGANG ↔️"}[macro["trend"]]
-        lines.append(f"📈 VN-Index: {macro['price']:,.0f} điểm | RSI {macro['rsi']} | Xu hướng: {trend_label}")
+        # SỬA 02/10/2026: thêm mức tăng/giảm điểm + % (trước đây chỉ có điểm số + RSI + xu hướng,
+        # thiếu hẳn phần biến động so với phiên trước mà SSI dự phòng vẫn có).
+        if macro.get("change") is not None:
+            chg_sign = "+" if macro["change"] >= 0 else ""
+            chg_part = f" ({chg_sign}{macro['change']:,.2f} / {chg_sign}{macro['change_percent']:.2f}%)"
+        else:
+            chg_part = ""
+        lines.append(f"📈 VN-Index: {macro['price']:,.0f} điểm{chg_part} | RSI {macro['rsi']} | Xu hướng: {trend_label}")
     elif market_breadth and market_breadth.get("index_value") is not None:
         # SỬA 01/10/2026: vnstock (nguồn chính cho RSI/xu hướng) đang bị giới hạn tốc độ —
         # dùng tạm giá trị + biến động VN-Index có sẵn từ SSI (cùng API đã lấy độ rộng toàn sàn
