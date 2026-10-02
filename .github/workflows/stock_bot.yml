@@ -39,7 +39,13 @@ jobs:
           pip install -r requirements.txt
           # Cài riêng, bỏ qua kiểm tra phụ thuộc (--no-deps) vì gói này tự khai "cần vnstock"
           # trong metadata, mà vnstock đang bị PyPI khóa -> nếu để pip tự giải quyết sẽ lỗi.
-          pip install --no-deps vnstock_ezchart
+          # SỬA 02/10/2026: GHIM đúng bản 0.0.3 — bản mới nhất (1.0.1, 1.0.2) trên PyPI bị LỖI
+          # ĐÓNG GÓI THẬT SỰ (file __init__.py gọi "from .static.chart import ..." nhưng thư
+          # mục "static/" không có trong gói được publish) -> import luôn luôn lỗi, khiến
+          # vnstock coi như "không có charting library nào" và bỏ qua lấy VN-Index MỖI LẦN
+          # CHẠY (không phải do giới hạn tốc độ như từng nghĩ trước đây). Đã tải và test trực
+          # tiếp: bản 0.0.3 có cấu trúc code khác, import thành công bình thường.
+          pip install --no-deps vnstock_ezchart==0.0.3
 
       # vnstock và vnai đang bị PyPI "quarantine" (không pip install được từ PyPI).
       # Dùng tạm bản đã cài sẵn ở máy, đóng gói trong vendor/vnstock_vendor.zip,
@@ -81,5 +87,5 @@ jobs:
           # ngoại, tín hiệu MUA/BÁN riêng). Viết mã in hoa, cách nhau bằng dấu phẩy, KHÔNG dấu
           # cách sau dấu phẩy. LƯU Ý: mã ở đây PHẢI có mặt trong WATCHLIST ở trên thì mới có
           # dữ liệu để hiện phần "Mã ưu tiên theo dõi" trong báo cáo.
-          PRIORITY_TICKERS: "DCM,TCX,VTP,CTR,VGI"
+          PRIORITY_TICKERS: "VTP,CTR"
         run: python stock_analysis_bot.py
