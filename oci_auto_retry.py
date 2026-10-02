@@ -50,8 +50,12 @@ OCI_IMAGE_OCID = _require("OCI_IMAGE_OCID")
 OCI_SSH_PUBLIC_KEY = _require("OCI_SSH_PUBLIC_KEY")
 
 INSTANCE_DISPLAY_NAME = os.getenv("OCI_INSTANCE_NAME", "falconthp-vm-bot").strip()
-OCPUS = float(os.getenv("OCI_OCPUS", "4"))
-MEMORY_GB = float(os.getenv("OCI_MEMORY_GB", "24"))
+# SỬA 02/10/2026: Oracle đã giảm hạn mức Always Free cho Ampere A1 từ 4 OCPU/24GB xuống còn
+# 2 OCPU/12GB (áp dụng từ 15/06/2026, cho MỌI tài khoản). Tài khoản này chưa từng tạo được VM
+# A1 thành công nên rất có khả năng KHÔNG được giữ hạn mức cũ (grandfathered) — xin 4/24 sẽ
+# luôn thất bại dù Oracle có trống chỗ. Hạ về đúng 2/12 để khớp hạn mức mới.
+OCPUS = float(os.getenv("OCI_OCPUS", "2"))
+MEMORY_GB = float(os.getenv("OCI_MEMORY_GB", "12"))
 BOOT_VOLUME_GB = float(os.getenv("OCI_BOOT_VOLUME_GB", "50"))
 
 # Job GitHub Actions nên đặt timeout-minutes lớn hơn số này 1-2 phút để không bị Actions tự ngắt
