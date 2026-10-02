@@ -11,10 +11,18 @@ name: OCI Auto Retry Create VM (Free Tier ARM)
 # đều đặn (chỉ chạy vài giây rồi thoát, không tốn thêm phút Actions/API đáng kể).
 on:
   schedule:
-    # SỬA 01/10/2026: giãn từ 15 phút lên 20 phút/lần, cộng với RETRY_INTERVAL_SEC tăng lên 60s —
-    # giảm tổng số lần gọi API LaunchInstance/ngày, an toàn hơn cho tài khoản.
-    - cron: "*/20 * * * *"
+    # SỬA 02/10/2026: rút từ 20 phút xuống 15 phút/lần. An toàn vì tốc độ gọi API thực tế KHÔNG đổi
+    # (vẫn cách nhau RETRY_INTERVAL_SEC=120s/lần bên trong mỗi lượt chạy) — chỉ giảm phần "chết"
+    # (không gọi gì) giữa 2 lượt chạy từ 10 phút xuống 5 phút, tăng số lượt dò/ngày.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
+
+# Chặn 2 lượt chạy chồng lên nhau (phòng trường hợp lượt trước chạy trễ) — nếu lượt mới tới trong
+# lúc lượt cũ còn chạy, GitHub sẽ xếp hàng chờ lượt cũ xong hẳn rồi mới chạy lượt mới, không bao giờ
+# có 2 tiến trình gọi API cùng lúc.
+concurrency:
+  group: oci-auto-retry-vm
+  cancel-in-progress: false
 
 jobs:
   try-create-vm:
