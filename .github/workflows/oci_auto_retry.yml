@@ -54,11 +54,12 @@ jobs:
           OCI_IMAGE_OCID: ${{ secrets.OCI_IMAGE_OCID }}
           OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
           OCI_INSTANCE_NAME: "falconthp-vm-bot"
-          # SỬA 02/10/2026: Oracle hạ hạn mức Always Free Ampere A1 từ 4 OCPU/24GB xuống 2 OCPU/12GB
-          # (áp dụng từ 15/06/2026, mọi tài khoản). Tài khoản này chưa từng tạo VM A1 thành công nên
-          # khả năng cao KHÔNG được giữ hạn mức cũ — xin 4/24 sẽ luôn bị từ chối dù còn chỗ trống.
-          OCI_OCPUS: "2"
-          OCI_MEMORY_GB: "12"
+          # SỬA 06/10/2026: sau ~270 lần thử nhiều ngày vẫn "Out of host capacity" ở Singapore (1 AD
+          # duy nhất, nổi tiếng khó xin ARM A1) — hạ tiếp từ 2 OCPU/12GB xuống 1 OCPU/6GB. Khẩu phần
+          # càng nhỏ, Oracle càng dễ "ghép" vào 1 khe trống hơn là phải tìm liền khối 2 OCPU/12GB.
+          # Có thể nâng lại lên 2/12 sau khi đã tạo được VM lần đầu thành công.
+          OCI_OCPUS: "1"
+          OCI_MEMORY_GB: "6"
           OCI_BOOT_VOLUME_GB: "50"
           MAX_DURATION_SEC: "600"
           # SỬA 01/10/2026: 60s vẫn dính 429 (giới hạn tốc độ) khá thường xuyên với riêng API
