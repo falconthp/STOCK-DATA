@@ -70,6 +70,17 @@ MAX_DURATION_SEC = int(os.getenv("MAX_DURATION_SEC", "600"))
 # ~5 lần thử thay vì ~10, nhưng ít bị Oracle giới hạn tốc độ/gắn cờ hơn.
 RETRY_INTERVAL_SEC = int(os.getenv("RETRY_INTERVAL_SEC", "120"))
 
+# SỬA 10/10/2026: sau 444 lần thử (nhiều ngày) vẫn "Out of host capacity" ở Singapore cho A1.Flex
+# (ARM) dù đã hạ xuống 1 OCPU/6GB — thêm PHƯƠNG ÁN DỰ PHÒNG: shape E2.1.Micro (x86, CŨNG thuộc
+# Always Free, 1/8 OCPU + 1GB RAM) rất ít bị tranh giành nên gần như luôn tạo được ngay. Script sẽ
+# thử tạo máy E2 này (tên riêng, KHÔNG đụng tới máy ARM) 1 LẦN DUY NHẤT mỗi lượt chạy — chỉ để có
+# ngay 1 máy dùng tạm trong lúc vẫn tiếp tục dò ARM song song. Đặt ENABLE_E2_FALLBACK=false trong
+# workflow nếu không muốn máy x86 dự phòng này (ví dụ đã đủ 2 máy E2 Micro miễn phí rồi).
+ENABLE_E2_FALLBACK = os.getenv("ENABLE_E2_FALLBACK", "true").strip().lower() == "true"
+E2_SHAPE = "VM.Standard.E2.1.Micro"
+E2_INSTANCE_NAME = os.getenv("OCI_E2_INSTANCE_NAME", f"{INSTANCE_DISPLAY_NAME}-e2micro").strip()
+E2_BOOT_VOLUME_GB = float(os.getenv("OCI_E2_BOOT_VOLUME_GB", "50"))
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -138,25 +149,27 @@ def get_oci_config() -> dict:
     }
 
 
-def instance_already_exists(compute_client) -> str:
-    """SỬA 01/10/2026: kiểm tra TRƯỚC KHI thử tạo — nếu đã có 1 instance tên đúng INSTANCE_DISPLAY_NAME
+def instance_already_exists(compute_client, display_name: str) -> str:
+    """SỬA 01/10/2026: kiểm tra TRƯỚC KHI thử tạo — nếu đã có 1 instance tên đúng display_name
     và CHƯA bị terminate, nghĩa là lần chạy trước đã tạo thành công rồi (có thể Telegram gửi lỗi/mất
     mạng nên bạn không thấy thông báo) — bỏ qua, KHÔNG thử tạo thêm (tránh tạo trùng, tốn hết hạn mức
     Free Tier OCPU/RAM). Đây cũng là cách TỰ DỪNG của tool: 1 khi đã tạo được VM, các lần chạy cron
     sau tự nhận ra và không gọi API tạo nữa — tuy lịch cron trong workflow vẫn tiếp tục kích hoạt job
     (GitHub không tự tắt schedule), nhưng job sẽ thoát ngay trong vài giây, gần như không tốn phút
     chạy Actions hay gọi thêm API Oracle nữa. Muốn tắt hẳn lịch, vào tab Actions > chọn workflow này >
-    nút "..." > Disable workflow."""
+    nút "..." > Disable workflow.
+    SỬA 10/10/2026: nhận display_name làm tham số (thay vì cố định INSTANCE_DISPLAY_NAME) để dùng
+    chung được cho cả máy ARM chính và máy E2.1.Micro dự phòng — 2 tên khác nhau, kiểm tra riêng."""
     states_to_ignore = {"TERMINATED", "TERMINATING"}
     try:
         resp = compute_client.list_instances(
-            compartment_id=OCI_COMPARTMENT_OCID, display_name=INSTANCE_DISPLAY_NAME
+            compartment_id=OCI_COMPARTMENT_OCID, display_name=display_name
         )
         for inst in resp.data:
             if inst.lifecycle_state not in states_to_ignore:
                 return inst.id
     except oci.exceptions.ServiceError as e:
-        log.warning("Không kiểm tra được instance đã tồn tại chưa (%s) — vẫn tiếp tục thử tạo.", e.message)
+        log.warning("Không kiểm tra được instance '%s' đã tồn tại chưa (%s) — vẫn tiếp tục thử tạo.", display_name, e.message)
     return None
 
 
@@ -167,24 +180,33 @@ def list_availability_domains(identity_client) -> list:
     return ads
 
 
-def try_launch_in_ad(compute_client, ad: str):
-    """Thử tạo instance ở ĐÚNG 1 AD. Trả về (thành_công: bool, chi_tiết_lỗi_hoặc_None)."""
-    details = oci.core.models.LaunchInstanceDetails(
+def try_launch_in_ad(compute_client, ad: str, shape: str = "VM.Standard.A1.Flex",
+                      display_name: str = None, ocpus: float = None, memory_gb: float = None,
+                      boot_volume_gb: float = None):
+    """Thử tạo instance ở ĐÚNG 1 AD. Trả về (thành_công: bool, chi_tiết_lỗi_hoặc_None).
+    SỬA 10/10/2026: tổng quát hóa (shape/display_name/ocpus/memory_gb) để dùng chung được cho cả
+    máy ARM A1.Flex chính (có shape_config OCPU/RAM tùy chỉnh) và máy E2.1.Micro dự phòng (shape
+    CỐ ĐỊNH, KHÔNG có shape_config — API sẽ lỗi nếu truyền shape_config cho shape không phải Flex)."""
+    is_flex = shape.endswith(".Flex")
+    kwargs = dict(
         availability_domain=ad,
         compartment_id=OCI_COMPARTMENT_OCID,
-        shape="VM.Standard.A1.Flex",
-        shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
-            ocpus=OCPUS, memory_in_gbs=MEMORY_GB
-        ),
-        display_name=INSTANCE_DISPLAY_NAME,
+        shape=shape,
+        display_name=display_name or INSTANCE_DISPLAY_NAME,
         create_vnic_details=oci.core.models.CreateVnicDetails(
             subnet_id=OCI_SUBNET_OCID, assign_public_ip=True
         ),
         source_details=oci.core.models.InstanceSourceViaImageDetails(
-            image_id=OCI_IMAGE_OCID, boot_volume_size_in_gbs=BOOT_VOLUME_GB
+            image_id=OCI_IMAGE_OCID, boot_volume_size_in_gbs=boot_volume_gb or BOOT_VOLUME_GB
         ),
         metadata={"ssh_authorized_keys": OCI_SSH_PUBLIC_KEY},
     )
+    if is_flex:
+        kwargs["shape_config"] = oci.core.models.LaunchInstanceShapeConfigDetails(
+            ocpus=ocpus if ocpus is not None else OCPUS,
+            memory_in_gbs=memory_gb if memory_gb is not None else MEMORY_GB,
+        )
+    details = oci.core.models.LaunchInstanceDetails(**kwargs)
     try:
         response = compute_client.launch_instance(details)
         return True, response.data
@@ -212,16 +234,38 @@ def main():
     identity_client = oci.identity.IdentityClient(cfg)
     compute_client = oci.core.ComputeClient(cfg)
 
-    existing_id = instance_already_exists(compute_client)
-    if existing_id:
-        log.info("✅ Instance '%s' đã tồn tại (ID: %s) — KHÔNG thử tạo thêm. Lần chạy này coi như hoàn tất ngay.",
-                  INSTANCE_DISPLAY_NAME, existing_id)
-        return 0
-
     ads = list_availability_domains(identity_client)
     if not ads:
         log.error("Không lấy được danh sách Availability Domain — kiểm tra lại cấu hình/quyền.")
         sys.exit(1)
+
+    # SỬA 10/10/2026: thử máy E2.1.Micro (x86) dự phòng TRƯỚC — chỉ 1 lượt qua các AD, không lặp
+    # lại nhiều lần như ARM (shape này hiếm khi hết chỗ nên không cần dò liên tục). Có máy dùng tạm
+    # ngay trong lúc vẫn tiếp tục dò ARM bên dưới như bình thường — KHÔNG thay thế mục tiêu ARM.
+    if ENABLE_E2_FALLBACK:
+        e2_existing_id = instance_already_exists(compute_client, E2_INSTANCE_NAME)
+        if e2_existing_id:
+            log.info("Máy E2.1.Micro dự phòng '%s' đã có sẵn (ID: %s) — không tạo thêm.",
+                      E2_INSTANCE_NAME, e2_existing_id)
+        else:
+            for ad in ads:
+                ok, result = try_launch_in_ad(compute_client, ad, shape=E2_SHAPE,
+                                               display_name=E2_INSTANCE_NAME,
+                                               boot_volume_gb=E2_BOOT_VOLUME_GB)
+                if ok:
+                    msg = (f"✅ Đã tạo máy DỰ PHÒNG '{E2_INSTANCE_NAME}' (x86 E2.1.Micro, 1/8 OCPU + 1GB RAM)!\n"
+                           f"Instance ID: {result.id}\nAD: {ad}\n"
+                           f"Đây là máy TẠM dùng trong lúc vẫn tiếp tục dò máy ARM '{INSTANCE_DISPLAY_NAME}' "
+                           f"mạnh hơn. Vào Console > Compute > Instances để xem Public IP.")
+                    log.info(msg)
+                    send_telegram(msg)
+                    break
+
+    existing_id = instance_already_exists(compute_client, INSTANCE_DISPLAY_NAME)
+    if existing_id:
+        log.info("✅ Instance '%s' đã tồn tại (ID: %s) — KHÔNG thử tạo thêm. Lần chạy này coi như hoàn tất ngay.",
+                  INSTANCE_DISPLAY_NAME, existing_id)
+        return 0
 
     start = time.time()
     attempt = 0
