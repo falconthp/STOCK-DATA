@@ -61,6 +61,13 @@ jobs:
           OCI_OCPUS: "1"
           OCI_MEMORY_GB: "6"
           OCI_BOOT_VOLUME_GB: "50"
+          # SỬA 10/10/2026: sau 444 lần thử vẫn chưa được ARM — thêm máy DỰ PHÒNG x86 E2.1.Micro
+          # (cũng thuộc Always Free, ít bị tranh giành nên gần như luôn tạo được ngay). Script tự
+          # thử tạo máy này 1 lần/lượt chạy, KHÔNG ảnh hưởng gì tới việc vẫn tiếp tục dò máy ARM ở
+          # trên. Đặt "false" nếu không muốn máy x86 dự phòng này nữa (ví dụ đã đủ dùng hoặc đã
+          # dùng hết 2 suất E2.1.Micro miễn phí).
+          ENABLE_E2_FALLBACK: "true"
+          OCI_E2_INSTANCE_NAME: "falconthp-vm-bot-e2micro"
           MAX_DURATION_SEC: "600"
           # SỬA 01/10/2026: 60s vẫn dính 429 (giới hạn tốc độ) khá thường xuyên với riêng API
           # LaunchInstance — tăng lên 120s/lần cho an toàn hơn, đổi lại mỗi lượt chạy còn ~5 lần thử
