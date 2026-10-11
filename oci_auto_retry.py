@@ -77,8 +77,30 @@ RETRY_INTERVAL_SEC = int(os.getenv("RETRY_INTERVAL_SEC", "120"))
 # ngay 1 máy dùng tạm trong lúc vẫn tiếp tục dò ARM song song. Đặt ENABLE_E2_FALLBACK=false trong
 # workflow nếu không muốn máy x86 dự phòng này (ví dụ đã đủ 2 máy E2 Micro miễn phí rồi).
 ENABLE_E2_FALLBACK = os.getenv("ENABLE_E2_FALLBACK", "true").strip().lower() == "true"
+# SỬA 11/10/2026: log thực tế báo lỗi "Shape VM.Standard.E2.1.Micro is not valid for image ***" —
+# OCI_IMAGE_OCID đang dùng là image kiến trúc ARM (aarch64, để tạo máy A1.Flex), KHÔNG tương thích
+# với shape x86 (E2.1.Micro) — đây là lỗi cấu hình thật (400), không phải hết chỗ, nên cứ lặp lại
+# mãi mãi mỗi lượt chạy nếu không sửa. BẮT BUỘC cần 1 image x86_64 RIÊNG cho máy E2 qua secret
+# OCI_E2_IMAGE_OCID (xem hướng dẫn lấy OCID trong README/tin nhắn kèm theo). Nếu chưa cấu hình,
+# tự động TẮT fallback E2 (thay vì cứ lỗi 400 vô ích mỗi lượt chạy) và chỉ cảnh báo 1 lần.
+OCI_E2_IMAGE_OCID = os.getenv("OCI_E2_IMAGE_OCID", "").strip()
+if ENABLE_E2_FALLBACK and not OCI_E2_IMAGE_OCID:
+    log.warning("ENABLE_E2_FALLBACK=true nhưng CHƯA có OCI_E2_IMAGE_OCID (image x86_64 riêng cho "
+                "E2.1.Micro) — image ARM hiện tại KHÔNG dùng được cho shape x86. Tạm tắt fallback "
+                "E2 lượt chạy này; thêm secret OCI_E2_IMAGE_OCID để bật lại.")
+    ENABLE_E2_FALLBACK = False
 E2_SHAPE = "VM.Standard.E2.1.Micro"
-E2_INSTANCE_NAME = os.getenv("OCI_E2_INSTANCE_NAME", f"{INSTANCE_DISPLAY_NAME}-e2micro").strip()
+# SỬA 10/10/2026 (lần 2): Oracle Always Free cho phép TỐI ĐA 2 máy E2.1.Micro cùng lúc (tách biệt
+# hoàn toàn với suất ARM) — tạo danh sách 2 tên thay vì 1, script sẽ thử tạo ĐỦ CẢ 2 (bỏ qua máy
+# nào đã có sẵn). Đặt OCI_E2_INSTANCE_NAMES="ten1,ten2" nếu muốn đổi tên; để trống phần tử nào thì
+# dùng tên mặc định tương ứng.
+_e2_names_raw = os.getenv("OCI_E2_INSTANCE_NAMES", "").strip()
+if _e2_names_raw:
+    E2_INSTANCE_NAMES = [n.strip() for n in _e2_names_raw.split(",") if n.strip()]
+else:
+    # Giữ nguyên tên máy đầu tiên là "-e2micro" (không phải "-e2micro-1") để KHỚP với tên đã dùng ở
+    # bản trước — tránh tạo trùng/mồ côi nếu máy đó lỡ đã được tạo ở lượt chạy trước khi có bản này.
+    E2_INSTANCE_NAMES = [f"{INSTANCE_DISPLAY_NAME}-e2micro", f"{INSTANCE_DISPLAY_NAME}-e2micro-2"]
 E2_BOOT_VOLUME_GB = float(os.getenv("OCI_E2_BOOT_VOLUME_GB", "50"))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -182,11 +204,14 @@ def list_availability_domains(identity_client) -> list:
 
 def try_launch_in_ad(compute_client, ad: str, shape: str = "VM.Standard.A1.Flex",
                       display_name: str = None, ocpus: float = None, memory_gb: float = None,
-                      boot_volume_gb: float = None):
+                      boot_volume_gb: float = None, image_id: str = None):
     """Thử tạo instance ở ĐÚNG 1 AD. Trả về (thành_công: bool, chi_tiết_lỗi_hoặc_None).
     SỬA 10/10/2026: tổng quát hóa (shape/display_name/ocpus/memory_gb) để dùng chung được cho cả
     máy ARM A1.Flex chính (có shape_config OCPU/RAM tùy chỉnh) và máy E2.1.Micro dự phòng (shape
-    CỐ ĐỊNH, KHÔNG có shape_config — API sẽ lỗi nếu truyền shape_config cho shape không phải Flex)."""
+    CỐ ĐỊNH, KHÔNG có shape_config — API sẽ lỗi nếu truyền shape_config cho shape không phải Flex).
+    SỬA 11/10/2026: thêm tham số image_id riêng — image ARM (aarch64) KHÔNG dùng được cho shape x86
+    (E2.1.Micro), gây lỗi 400 "Shape ... is not valid for image ..." (lỗi cấu hình thật, không phải
+    hết chỗ) nếu dùng chung OCI_IMAGE_OCID cho cả 2."""
     is_flex = shape.endswith(".Flex")
     kwargs = dict(
         availability_domain=ad,
@@ -197,7 +222,7 @@ def try_launch_in_ad(compute_client, ad: str, shape: str = "VM.Standard.A1.Flex"
             subnet_id=OCI_SUBNET_OCID, assign_public_ip=True
         ),
         source_details=oci.core.models.InstanceSourceViaImageDetails(
-            image_id=OCI_IMAGE_OCID, boot_volume_size_in_gbs=boot_volume_gb or BOOT_VOLUME_GB
+            image_id=image_id or OCI_IMAGE_OCID, boot_volume_size_in_gbs=boot_volume_gb or BOOT_VOLUME_GB
         ),
         metadata={"ssh_authorized_keys": OCI_SSH_PUBLIC_KEY},
     )
@@ -243,17 +268,22 @@ def main():
     # lại nhiều lần như ARM (shape này hiếm khi hết chỗ nên không cần dò liên tục). Có máy dùng tạm
     # ngay trong lúc vẫn tiếp tục dò ARM bên dưới như bình thường — KHÔNG thay thế mục tiêu ARM.
     if ENABLE_E2_FALLBACK:
-        e2_existing_id = instance_already_exists(compute_client, E2_INSTANCE_NAME)
-        if e2_existing_id:
-            log.info("Máy E2.1.Micro dự phòng '%s' đã có sẵn (ID: %s) — không tạo thêm.",
-                      E2_INSTANCE_NAME, e2_existing_id)
-        else:
+        # SỬA 10/10/2026 (lần 2): lặp qua ĐỦ CẢ danh sách tên máy E2 (mặc định 2 máy, đúng hạn mức
+        # Always Free tối đa cho E2.1.Micro) — máy nào đã có sẵn thì bỏ qua, máy nào chưa có thì thử
+        # tạo (1 lượt qua các AD, không lặp nhiều lần vì shape này hiếm khi hết chỗ).
+        for e2_name in E2_INSTANCE_NAMES:
+            e2_existing_id = instance_already_exists(compute_client, e2_name)
+            if e2_existing_id:
+                log.info("Máy E2.1.Micro dự phòng '%s' đã có sẵn (ID: %s) — không tạo thêm.",
+                          e2_name, e2_existing_id)
+                continue
             for ad in ads:
                 ok, result = try_launch_in_ad(compute_client, ad, shape=E2_SHAPE,
-                                               display_name=E2_INSTANCE_NAME,
-                                               boot_volume_gb=E2_BOOT_VOLUME_GB)
+                                               display_name=e2_name,
+                                               boot_volume_gb=E2_BOOT_VOLUME_GB,
+                                               image_id=OCI_E2_IMAGE_OCID)
                 if ok:
-                    msg = (f"✅ Đã tạo máy DỰ PHÒNG '{E2_INSTANCE_NAME}' (x86 E2.1.Micro, 1/8 OCPU + 1GB RAM)!\n"
+                    msg = (f"✅ Đã tạo máy DỰ PHÒNG '{e2_name}' (x86 E2.1.Micro, 1/8 OCPU + 1GB RAM)!\n"
                            f"Instance ID: {result.id}\nAD: {ad}\n"
                            f"Đây là máy TẠM dùng trong lúc vẫn tiếp tục dò máy ARM '{INSTANCE_DISPLAY_NAME}' "
                            f"mạnh hơn. Vào Console > Compute > Instances để xem Public IP.")
