@@ -12,6 +12,8 @@ name: OCI Auto Retry Create VM (Free Tier ARM)
 # SỬA 14/10/2026: script viết lại phần dò — (1) gặp 429 thì chờ tăng dần rồi thử lại, không bỏ lượt;
 # (2) máy ARM và 2 máy E2 dự phòng cùng được dò suốt cả lượt chạy, không chỉ 1 lần đầu; (3) thử lần
 # lượt cả 3 Fault Domain; (4) dùng API báo cáo chỗ trống để phát hiện chỗ trống sớm hơn.
+# SỬA 17/10/2026: giãn cách LaunchInstance để hết bị 429 dồn dập, dò dày hơn (~18 vòng/lượt thay vì 3),
+# và mọi lần chờ đều bị chặn bởi MAX_DURATION_SEC — không còn bị GitHub ngắt "The operation was canceled".
 on:
   schedule:
     # SỬA 02/10/2026: rút từ 20 phút xuống 15 phút/lần. An toàn vì tốc độ gọi API thực tế KHÔNG đổi
@@ -87,7 +89,14 @@ jobs:
           # Report — API rẻ, không tạo gì nên ít bị 429 hơn LaunchInstance). Thấy Fault Domain nào báo
           # AVAILABLE thì script bắn LaunchInstance ngay vào đúng FD đó. LaunchInstance "bắn thử" định
           # kỳ vẫn giữ nhịp RETRY_INTERVAL_SEC=120s như cũ, không tăng tần suất gọi API tạo máy.
-          CHECK_INTERVAL_SEC: "45"
+          # SỬA 17/10/2026: log 17/10 cho thấy API báo cáo không hề bị 429 -> rút nhịp dò xuống 30s.
+          CHECK_INTERVAL_SEC: "30"
+          # SỬA 17/10/2026: 2 lần gọi LaunchInstance bất kỳ (của bất kỳ máy nào) luôn cách nhau tối
+          # thiểu 40s — log 17/10 bị 429 liên tục vì bắn thử 3 máy sát nhau chỉ cách 1-2s.
+          LAUNCH_GAP_SEC: "40"
+          # SỬA 17/10/2026: khi báo cáo nói hết chỗ, mỗi máy chỉ "bắn thử" phòng hờ 300s/lần (báo cáo
+          # luôn khớp kết quả thật trong log 17/10). Báo cáo nói CÓ CHỖ thì vẫn bắn ngay lập tức.
+          BLIND_LAUNCH_INTERVAL_SEC: "300"
           # Dùng lại đúng secret Telegram đã có sẵn từ 2 bot kia, để báo ngay khi tạo VM thành công.
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
