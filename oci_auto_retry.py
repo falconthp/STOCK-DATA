@@ -173,21 +173,42 @@ def get_oci_config() -> dict:
 
 
 # ======================= SỬA 14/10/2026: VIẾT LẠI PHẦN DÒ/TẠO VM CHO DỄ "BẮT CHỖ" HƠN =======================
-# Phân tích log thật ngày 11/10/2026 cho thấy 4 điểm yếu của bản cũ, bản này sửa cả 4:
-#   1. Gặp 429 (giới hạn tốc độ) là BỎ LUÔN lần thử đó (chỉ ngủ 15s rồi trả về thất bại) -> máy E2 #1
-#      mất trắng lượt. Nay: 429 thì chờ tăng dần (30s, 60s, 120s... tối đa 300s) rồi THỬ LẠI đúng máy đó.
-#   2. Máy E2 dự phòng chỉ được thử ĐÚNG 1 LẦN ở đầu mỗi lượt chạy, sau đó cả 10 phút chỉ dò ARM. Nay:
-#      cả máy ARM lẫn 2 máy E2 cùng được dò xuyên suốt cả lượt chạy, máy nào xong thì rút khỏi danh sách.
-#   3. Không chỉ định Fault Domain -> Oracle tự chọn, hay chọn trúng FD đang đầy. Singapore chỉ có 1 AD
-#      nhưng có 3 Fault Domain (FD-1/2/3), chỗ trống thường chỉ xuất hiện ở 1 FD — nay thử lần lượt cả 3.
-#   4. Mỗi lần thử đều phải gọi LaunchInstance (API "đắt", dễ dính 429). Nay dùng thêm API
-#      CreateComputeCapacityReport (API "hỏi xem còn chỗ không", rẻ hơn, không tạo gì) để dò thường xuyên
-#      hơn (mặc định 45s/lần); thấy FD nào báo AVAILABLE thì bắn LaunchInstance NGAY vào đúng FD đó. Báo
-#      cáo này đôi khi không chính xác 100%, nên vẫn giữ nhịp "bắn thử" LaunchInstance định kỳ như cũ
-#      (RETRY_INTERVAL_SEC=120s) — không bỏ lỡ trường hợp báo cáo sai.
-CHECK_INTERVAL_SEC = int(os.getenv("CHECK_INTERVAL_SEC", "45"))
-BACKOFF_MAX_SEC = 300
+# Dùng API CreateComputeCapacityReport (hỏi "còn chỗ không", không tạo gì) để dò thường xuyên, thấy
+# Fault Domain nào báo AVAILABLE thì bắn LaunchInstance NGAY vào đúng FD đó; xoay vòng cả 3 FD.
+#
+# SỬA 17/10/2026 — log thật 17/10 cho thấy 3 vấn đề, bản này sửa:
+#   1. "Bắn thử" LaunchInstance cho 3 máy sát nhau (cách 1-2s) -> gần như lần nào cũng dính 429; mỗi lần
+#      429 lại chờ 30s + 60s -> cả lượt 600s chỉ dò được 3 vòng (thay vì ~20 vòng như thiết kế).
+#      Nay: (a) giữa 2 lần gọi LaunchInstance bất kỳ luôn cách nhau tối thiểu LAUNCH_GAP_SEC (mặc định
+#      40s), chưa đủ thì để vòng sau, KHÔNG ngồi chờ; (b) "bắn thử" khi báo cáo đang nói hết chỗ chỉ là
+#      phòng hờ nên gặp 429 thì bỏ qua luôn (không chờ), chỉ dời lịch bắn thử sau; (c) chỉ khi báo cáo nói
+#      CÓ CHỖ thì mới chờ ngắn (10s, 20s) và thử lại — vì lúc đó mới đáng giành giật.
+#   2. Lượt chạy vượt quá giờ (vòng cuối bắt đầu ở giây 562 nhưng còn ngồi chờ 429 thêm vài phút) -> bị
+#      GitHub ngắt ("The operation was canceled", job báo đỏ). Nay mọi lần chờ đều bị chặn bởi hạn chót
+#      MAX_DURATION_SEC — hết giờ là dừng gọn, in tổng kết, job báo xanh.
+#   3. Báo cáo chỗ trống luôn khớp với kết quả LaunchInstance thật (đều OUT_OF_HOST_CAPACITY) -> khi báo
+#      cáo dùng được, giãn nhịp bắn thử ra BLIND_LAUNCH_INTERVAL_SEC (mặc định 300s/máy) để dành "hạn mức
+#      gọi API" cho lúc báo cáo báo có chỗ thật.
+CHECK_INTERVAL_SEC = int(os.getenv("CHECK_INTERVAL_SEC", "30"))
+LAUNCH_GAP_SEC = int(os.getenv("LAUNCH_GAP_SEC", "40"))
+BLIND_LAUNCH_INTERVAL_SEC = int(os.getenv("BLIND_LAUNCH_INTERVAL_SEC", "300"))
 ARM_SHAPE = "VM.Standard.A1.Flex"
+
+_deadline = None          # thời điểm (time.time()) phải dừng lượt chạy
+_last_any_launch = 0.0    # lần gọi LaunchInstance gần nhất (của BẤT KỲ máy nào)
+
+
+def time_left() -> float:
+    return (_deadline - time.time()) if _deadline else 1e9
+
+
+def sleep_capped(sec: float) -> bool:
+    """Ngủ nhưng không vượt hạn chót. Trả về False nếu đã hết giờ (không nên làm gì thêm)."""
+    left = time_left() - 3
+    if left <= 0:
+        return False
+    time.sleep(max(0, min(sec, left)))
+    return time_left() > 3
 
 
 class Target:
@@ -202,10 +223,12 @@ class Target:
         self.memory_gb = memory_gb
         self.label = label or name
         self.done = False          # đã tạo xong / đã có sẵn
-        self.skipped = False       # lỗi cấu hình (vd image sai kiến trúc, vượt hạn mức) — bỏ qua lượt này
-        self.last_launch = 0.0     # thời điểm gọi LaunchInstance gần nhất
-        self.fd_index = 0          # xoay vòng Fault Domain khi "bắn thử" không có báo cáo AVAILABLE
+        self.skipped = False       # lỗi cấu hình (image sai kiến trúc, vượt hạn mức...) — bỏ qua lượt này
+        self.next_blind = 0.0      # thời điểm được "bắn thử" tiếp theo
+        self.fd_index = 0          # xoay vòng Fault Domain khi bắn thử
         self.launch_tries = 0
+        self.reports = 0
+        self.seen_available = 0
 
     @property
     def active(self):
@@ -249,25 +272,9 @@ def list_fault_domains(identity_client, ad: str) -> list:
     return [None]
 
 
-class Backoff:
-    """Chờ tăng dần khi bị 429: 30s, 60s, 120s, 240s, 300s (tối đa). Gọi thành công thì reset về 30s."""
-
-    def __init__(self):
-        self.next_wait = 30
-
-    def hit(self, what: str):
-        wait = self.next_wait
-        log.warning("  %s: bị giới hạn tốc độ API (429) — chờ %ds rồi thử lại (KHÔNG bỏ lượt).", what, wait)
-        time.sleep(wait)
-        self.next_wait = min(self.next_wait * 2, BACKOFF_MAX_SEC)
-
-    def ok(self):
-        self.next_wait = 30
-
-
-def capacity_report(compute_client, target: Target, ad: str, fds: list, backoff: Backoff):
-    """Hỏi Oracle: shape này ở từng Fault Domain còn chỗ không. Trả về list FD đang AVAILABLE,
-    hoặc None nếu API này không dùng được (thiếu quyền/lỗi) -> chỉ dựa vào bắn thử định kỳ."""
+def capacity_report(compute_client, target: Target, ad: str, fds: list):
+    """Hỏi Oracle: shape này ở từng Fault Domain còn chỗ không. Trả về list FD đang AVAILABLE ([] nếu
+    hết chỗ hoặc lỗi tạm thời), hoặc None nếu API này không dùng được (thiếu quyền...) -> bắn thử định kỳ."""
     shape_cfg = None
     if target.is_flex:
         shape_cfg = oci.core.models.CapacityReportInstanceShapeConfig(
@@ -279,34 +286,38 @@ def capacity_report(compute_client, target: Target, ad: str, fds: list, backoff:
     ]
     details = oci.core.models.CreateComputeCapacityReportDetails(
         compartment_id=OCI_TENANCY_OCID, availability_domain=ad, shape_availabilities=avail_items)
+    target.reports += 1
     try:
         resp = compute_client.create_compute_capacity_report(details)
-        backoff.ok()
     except oci.exceptions.ServiceError as e:
         if e.status == 429:
-            backoff.hit(f"Báo cáo chỗ trống [{target.label}]")
+            log.warning("  Dò chỗ trống [%s]: bị 429 — bỏ qua vòng này.", target.label)
             return []
-        log.warning("  Báo cáo chỗ trống [%s] lỗi (%s %s): %s — bỏ qua bước dò này, vẫn bắn thử định kỳ.",
+        log.warning("  Dò chỗ trống [%s] lỗi (%s %s): %s — chuyển sang chỉ bắn thử định kỳ.",
                     target.label, e.status, e.code, e.message)
         return None
     except Exception as e:  # lỗi mạng tạm thời
-        log.warning("  Báo cáo chỗ trống [%s] lỗi mạng: %s", target.label, e)
+        log.warning("  Dò chỗ trống [%s] lỗi mạng: %s", target.label, e)
         return []
-    available = []
-    summary = []
+    available, summary = [], []
     for item in resp.data.shape_availabilities or []:
         status = item.availability_status
         fd = item.fault_domain or "?"
         summary.append(f"{fd.replace('FAULT-DOMAIN-', 'FD')}={status}")
         if status == "AVAILABLE":
             available.append(item.fault_domain)
-    log.info("  Dò chỗ trống [%s]: %s", target.label, ", ".join(summary) or "(không có dữ liệu)")
+    line = ", ".join(summary) or "(không có dữ liệu)"
+    # Chỉ in chi tiết khi có chỗ, hoặc 1 lần mỗi ~10 vòng — tránh log quá dài khi hết chỗ liên tục.
+    if available or target.reports % 10 == 1:
+        log.info("  Dò chỗ trống [%s] (lần %d): %s", target.label, target.reports, line)
     return available
 
 
-def try_launch(compute_client, target: Target, ad: str, fd, backoff: Backoff):
+def try_launch(compute_client, target: Target, ad: str, fd, urgent: bool):
     """Gọi LaunchInstance cho target ở AD/FD chỉ định. Trả về instance nếu thành công, None nếu chưa được.
-    429 thì chờ tăng dần rồi thử lại ngay đúng máy đó (tối đa 3 lần) thay vì bỏ lượt như bản cũ."""
+    urgent=True (báo cáo nói CÓ CHỖ): gặp 429 thì chờ ngắn 10s, 20s rồi thử lại.
+    urgent=False (bắn thử phòng hờ): gặp 429 thì bỏ qua luôn, dời lịch bắn thử sau."""
+    global _last_any_launch
     kwargs = dict(
         availability_domain=ad,
         compartment_id=OCI_COMPARTMENT_OCID,
@@ -323,14 +334,14 @@ def try_launch(compute_client, target: Target, ad: str, fd, backoff: Backoff):
         kwargs["shape_config"] = oci.core.models.LaunchInstanceShapeConfigDetails(
             ocpus=target.ocpus, memory_in_gbs=target.memory_gb)
     details = oci.core.models.LaunchInstanceDetails(**kwargs)
-    where = f"[{target.label}] {fd or ad}"
+    where = f"[{target.label}] {fd or ad}" + ("" if urgent else " (bắn thử)")
 
-    for _ in range(3):
-        target.last_launch = time.time()
+    waits = [10, 20] if urgent else []
+    for attempt in range(len(waits) + 1):
+        _last_any_launch = time.time()
         target.launch_tries += 1
         try:
             resp = compute_client.launch_instance(details)
-            backoff.ok()
             return resp.data
         except oci.exceptions.ServiceError as e:
             msg = e.message or ""
@@ -339,16 +350,19 @@ def try_launch(compute_client, target: Target, ad: str, fd, backoff: Backoff):
                 log.info("  %s: hết chỗ (Out of host capacity).", where)
                 return None
             if e.status == 429:
-                backoff.hit(where)
-                continue
+                if attempt < len(waits):
+                    log.warning("  %s: bị 429 — chờ %ds rồi thử lại.", where, waits[attempt])
+                    if not sleep_capped(waits[attempt]):
+                        return None
+                    continue
+                log.info("  %s: bị 429 — bỏ qua, dời lần bắn thử sau.", where)
+                return None
             if e.status in (401, 404):
                 log.error("  %s: lỗi cấu hình (%s): %s — KIỂM TRA LẠI OCID/QUYỀN.", where, e.status, msg)
                 send_telegram(f"❌ Script tạo VM Oracle dừng vì lỗi cấu hình ({e.status}): {msg}\n"
                               f"Kiểm tra lại OCID/quyền, không phải do hết chỗ.")
                 sys.exit(1)
             if "LimitExceeded" in code or "QuotaExceeded" in code or "service limit" in msg.lower():
-                # Vượt hạn mức (vd tài khoản đã có đủ 2 máy E2 Micro dưới tên khác, hoặc đã dùng hết
-                # OCPU ARM miễn phí) — thử tiếp cũng vô ích trong lượt này.
                 log.error("  %s: VƯỢT HẠN MỨC (%s): %s — bỏ qua máy này lượt chạy này.", where, code, msg)
                 target.skipped = True
                 return None
@@ -357,7 +371,6 @@ def try_launch(compute_client, target: Target, ad: str, fd, backoff: Backoff):
                 send_telegram(f"⚠️ Máy '{target.name}' lỗi cấu hình 400 ({code}): {msg}")
                 target.skipped = True
                 return None
-            # 500 khác / 503 / lỗi tạm thời: coi như chưa được, lần sau thử tiếp.
             log.warning("  %s: lỗi khác (%s %s): %s", where, e.status, code, msg)
             return None
         except Exception as e:
@@ -380,6 +393,9 @@ def announce_success(target: Target, inst, ad: str, fd):
 
 
 def main():
+    global _deadline
+    _deadline = time.time() + MAX_DURATION_SEC
+
     cfg = get_oci_config()
     identity_client = oci.identity.IdentityClient(cfg)
     compute_client = oci.core.ComputeClient(cfg)
@@ -391,7 +407,6 @@ def main():
     fds_by_ad = {ad: list_fault_domains(identity_client, ad) for ad in ads}
     log.info("Fault Domain theo AD: %s", fds_by_ad)
 
-    # Danh sách máy cần tạo: máy ARM chính + (nếu bật) 2 máy E2 dự phòng.
     targets = [Target(INSTANCE_DISPLAY_NAME, ARM_SHAPE, OCI_IMAGE_OCID, BOOT_VOLUME_GB,
                       ocpus=OCPUS, memory_gb=MEMORY_GB, label=f"ARM {OCPUS:g}/{MEMORY_GB:g}GB")]
     if ENABLE_E2_FALLBACK:
@@ -407,57 +422,61 @@ def main():
         log.info("Tất cả máy cần tạo đều đã có — lượt chạy này kết thúc ngay.")
         return 0
 
-    backoff = Backoff()
-    report_ok = True   # API báo cáo chỗ trống còn dùng được không
-    start = time.time()
+    # Lệch lịch bắn thử giữa các máy để không bao giờ bắn 3 máy sát nhau (nguyên nhân 429 trong log 17/10).
+    now = time.time()
+    for i, t in enumerate(t for t in targets if t.active):
+        t.next_blind = now + i * LAUNCH_GAP_SEC
+
+    report_ok = True
     cycle = 0
-    while time.time() - start < MAX_DURATION_SEC and any(t.active for t in targets):
+    while time_left() > 5 and any(t.active for t in targets):
         cycle += 1
-        elapsed = time.time() - start
-        pending = ", ".join(t.label for t in targets if t.active)
-        log.info("--- Vòng dò #%d (đã chạy %.0fs/%ds) — còn chờ: %s ---", cycle, elapsed, MAX_DURATION_SEC, pending)
+        if cycle % 10 == 1:
+            pending = ", ".join(t.label for t in targets if t.active)
+            log.info("--- Vòng dò #%d (còn %.0fs) — còn chờ: %s ---", cycle, time_left(), pending)
 
         for t in targets:
-            if not t.active:
+            if not t.active or time_left() <= 5:
                 continue
             for ad in ads:
-                if not t.active:
+                if not t.active or time_left() <= 5:
                     break
                 fds = fds_by_ad[ad]
-                # Bước 1: hỏi báo cáo chỗ trống (rẻ). FD nào AVAILABLE thì bắn ngay vào đó.
+                # Bước 1: báo cáo chỗ trống (rẻ). Có FD AVAILABLE -> bắn NGAY, bỏ qua giãn cách.
                 available = None
                 if report_ok:
-                    available = capacity_report(compute_client, t, ad, fds, backoff)
+                    available = capacity_report(compute_client, t, ad, fds)
                     if available is None:
                         report_ok = False
                 if available:
+                    t.seen_available += 1
                     for fd in available:
-                        log.info("  >>> [%s] báo cáo có chỗ ở %s — bắn LaunchInstance NGAY!", t.label, fd)
-                        inst = try_launch(compute_client, t, ad, fd, backoff)
+                        log.info("  >>> [%s] báo cáo CÓ CHỖ ở %s — bắn LaunchInstance NGAY!", t.label, fd)
+                        inst = try_launch(compute_client, t, ad, fd, urgent=True)
                         if inst:
                             announce_success(t, inst, ad, fd)
                             t.done = True
                             break
                     continue
-                # Bước 2: không có báo cáo AVAILABLE -> vẫn "bắn thử" định kỳ, xoay vòng lần lượt từng FD.
-                if time.time() - t.last_launch >= RETRY_INTERVAL_SEC:
+                # Bước 2: bắn thử phòng hờ (báo cáo có thể sai), giãn cách để không dính 429.
+                if time.time() >= t.next_blind and time.time() - _last_any_launch >= LAUNCH_GAP_SEC:
                     fd = fds[t.fd_index % len(fds)]
                     t.fd_index += 1
-                    inst = try_launch(compute_client, t, ad, fd, backoff)
+                    t.next_blind = time.time() + (BLIND_LAUNCH_INTERVAL_SEC if report_ok else RETRY_INTERVAL_SEC)
+                    inst = try_launch(compute_client, t, ad, fd, urgent=False)
                     if inst:
                         announce_success(t, inst, ad, fd)
                         t.done = True
 
         if not any(t.active for t in targets):
             break
-        remaining = MAX_DURATION_SEC - (time.time() - start)
-        if remaining <= 0:
+        if not sleep_capped(CHECK_INTERVAL_SEC if report_ok else min(RETRY_INTERVAL_SEC, LAUNCH_GAP_SEC)):
             break
-        time.sleep(min(CHECK_INTERVAL_SEC if report_ok else RETRY_INTERVAL_SEC, max(remaining, 1)))
 
     for t in targets:
         state = "ĐÃ CÓ" if t.done else ("BỎ QUA (lỗi cấu hình/hạn mức)" if t.skipped else "chưa bắt được chỗ")
-        log.info("Tổng kết [%s] '%s': %s (đã gọi LaunchInstance %d lần lượt này)", t.label, t.name, state, t.launch_tries)
+        log.info("Tổng kết [%s] '%s': %s — dò %d lần (thấy có chỗ %d lần), gọi LaunchInstance %d lần.",
+                 t.label, t.name, state, t.reports, t.seen_available, t.launch_tries)
     log.info("Kết thúc lượt chạy sau %d vòng dò — lượt cron kế tiếp sẽ dò tiếp nếu còn máy chưa tạo.", cycle)
     return 0  # KHÔNG để job "Failed" — chưa bắt được chỗ trống không phải lỗi thật
 
