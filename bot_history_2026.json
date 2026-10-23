@@ -28519,10 +28519,10 @@
       "cci": 86.5,
       "pe": null,
       "pb": null,
-      "foreign_room_pct": null,
-      "money_flow": "binh_thuong",
+      "foreign_room_pct": 3.8,
+      "money_flow": "ra_manh",
       "money_flow_basis": "khoi_ngoai",
-      "foreign_net_val": 0.0,
+      "foreign_net_val": -5099596400.0,
       "is_buy_signal": false,
       "is_sell_signal": false
     },
@@ -28582,10 +28582,10 @@
       "cci": -56.1,
       "pe": null,
       "pb": null,
-      "foreign_room_pct": null,
+      "foreign_room_pct": 44.6,
       "money_flow": "binh_thuong",
       "money_flow_basis": "khoi_ngoai",
-      "foreign_net_val": 0.0,
+      "foreign_net_val": 1542544050.0,
       "is_buy_signal": false,
       "is_sell_signal": false
     },
@@ -28886,7 +28886,7 @@
   ],
   "_meta": {
     "year": 2026,
-    "last_updated": "2026-10-23T11:38:19+07:00",
+    "last_updated": "2026-10-23T14:36:03+07:00",
     "data_dictionary": {
       "macro_daily": "1 dòng/phiên (date = ngày phiên đã chốt, không phải ngày chạy bot): vnindex_price/rsi/trend, breadth_up/down (trong danh mục theo dõi), hose_advance/decline/ceiling/floor (toàn sàn HOSE), prop_net_value (tự doanh mua ròng, VNĐ).",
       "sector_flow_daily": "1 dòng/ngành/phiên: count (số mã), inflow_count (số mã dòng tiền vào mạnh), net_val_sum (tổng khối ngoại mua ròng theo ngành, VNĐ), pe_avg/pb_avg (định giá TB ngành).",
