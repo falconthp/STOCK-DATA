@@ -332,11 +332,11 @@
       "vnindex_trend": "giam",
       "breadth_up": 5,
       "breadth_down": 54,
-      "hose_advance": 43,
-      "hose_decline": 267,
-      "hose_ceiling": 3,
-      "hose_floor": 14,
-      "prop_net_value": 0.0
+      "hose_advance": null,
+      "hose_decline": null,
+      "hose_ceiling": null,
+      "hose_floor": null,
+      "prop_net_value": null
     }
   ],
   "sector_flow_daily": [
@@ -39582,7 +39582,7 @@
   ],
   "_meta": {
     "year": 2026,
-    "last_updated": "2026-11-02T23:44:03+07:00",
+    "last_updated": "2026-11-03T02:00:23+07:00",
     "data_dictionary": {
       "macro_daily": "1 dòng/phiên (date = ngày phiên đã chốt, không phải ngày chạy bot): vnindex_price/rsi/trend, breadth_up/down (trong danh mục theo dõi), hose_advance/decline/ceiling/floor (toàn sàn HOSE), prop_net_value (tự doanh mua ròng, VNĐ).",
       "sector_flow_daily": "1 dòng/ngành/phiên: count (số mã), inflow_count (số mã dòng tiền vào mạnh), net_val_sum (tổng khối ngoại mua ròng theo ngành, VNĐ), pe_avg/pb_avg (định giá TB ngành).",
