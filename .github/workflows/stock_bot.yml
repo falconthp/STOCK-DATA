@@ -45,8 +45,10 @@ jobs:
           # vnstock coi như "không có charting library nào" và bỏ qua lấy VN-Index MỖI LẦN
           # CHẠY (không phải do giới hạn tốc độ như từng nghĩ trước đây). Đã tải và test trực
           # tiếp: bản 0.0.3 có cấu trúc code khác, import thành công bình thường.
-          pip install --no-deps vnstock_ezchart==0.0.3
-
+          # SỬA 12/11/2026: gói vnstock_ezchart hiện bị PyPI khóa (quarantine), pip báo
+          # "No matching distribution found" làm CẢ workflow dừng. Thêm "|| echo ..." để lỗi cài
+          # gói này không làm dừng bot; khi thiếu gói, vnstock sẽ bỏ qua phần lấy VN-Index.
+          pip install --no-deps vnstock_ezchart==0.0.3 || echo "Không cài được vnstock_ezchart (PyPI đang khóa), bỏ qua"
       # vnstock và vnai đang bị PyPI "quarantine" (không pip install được từ PyPI).
       # Dùng tạm bản đã cài sẵn ở máy, đóng gói trong vendor/vnstock_vendor.zip,
       # giải nén ra rồi trỏ PYTHONPATH vào đó để Python import được như bình thường.
@@ -56,7 +58,6 @@ jobs:
         run: |
           mkdir -p vendor_extracted
           unzip -o vnstock_vendor.zip -d vendor_extracted
-
       - name: Chạy bot phân tích
         env:
           PYTHONPATH: ${{ github.workspace }}/vendor_extracted/vnstock_vendor
