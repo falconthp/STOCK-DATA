@@ -3,9 +3,11 @@ name: Stock Analysis Bot
 # Bot chạy tự động theo lịch. LƯU Ý: lịch "cron" của GitHub LUÔN tính theo giờ UTC
 # (giờ VN = UTC+7), nên giờ cron bên dưới đã trừ đi 7 tiếng.
 # SỬA 13/11/2026: chỉ chạy 2 lần/ngày, buổi chiều, để không dùng chung hạn mức Gemini
-# với bot lọc thầu trong giờ cao điểm đăng thông báo mời thầu buổi sáng:
-#   - 14:00  giờ VN (07:00 UTC) -> giữa phiên chiều
-#   - 16:30  giờ VN (09:30 UTC) -> sau khi đóng cửa (14:45), để lưu dữ liệu CHỐT phiên vào GitHub
+# với bot lọc thầu trong giờ cao điểm đăng thông báo mời thầu buổi sáng.
+# SỬA 25/11/2026: dời khỏi mốc tròn giờ (:00, :30) vì GitHub hay quá tải và chạy trễ
+# nhiều giờ ở các mốc này:
+#   - 14:07  giờ VN (07:07 UTC) -> giữa phiên chiều
+#   - 16:37  giờ VN (09:37 UTC) -> sau khi đóng cửa (14:45), để lưu dữ liệu CHỐT phiên vào GitHub
 # SỬA 17/11/2026: thêm TZ=Asia/Ho_Chi_Minh để giờ in trong báo cáo là giờ Việt Nam
 # (trước đó máy GitHub dùng giờ UTC nên báo cáo bị lệch 7 tiếng).
 # LƯU Ý (30/09/2026): GitHub Actions không đảm bảo chạy đúng giây/phút đã đặt — cron của
@@ -13,8 +15,8 @@ name: Stock Analysis Bot
 # Chỉ chạy các ngày thứ 2 - thứ 6 (1-5 trong cron = Mon-Fri).
 on:
   schedule:
-    - cron: "0 7 * * 1-5"
-    - cron: "30 9 * * 1-5"
+    - cron: "7 7 * * 1-5"
+    - cron: "37 9 * * 1-5"
   # Cho phép bấm nút "Run workflow" trên GitHub để chạy thủ công bất kỳ lúc nào.
   workflow_dispatch:
 
