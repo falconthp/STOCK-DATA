@@ -1,16 +1,17 @@
 name: SSI Data Export + Gemini
 
-# Chạy 1 lần/ngày vào 17:00 giờ Việt Nam (UTC+7 -> 10:00 UTC), các ngày thứ 2 - thứ 6, sau khi
+# Chạy 1 lần/ngày vào 17:13 giờ Việt Nam (UTC+7 -> 10:13 UTC), các ngày thứ 2 - thứ 6, sau khi
 # thị trường đã đóng cửa (14:45) — đủ để dữ liệu phiên hôm đó đã chốt hẳn.
 # LƯU Ý: lịch "cron" của GitHub LUÔN tính theo giờ UTC, nên giờ cron đã trừ đi 7 tiếng.
-# Script này TÁCH BIỆT HOÀN TOÀN với stock_bot.yml (bot phân tích + gửi Telegram lúc 14:00 và
-# 16:30) — chỉ xuất dữ liệu thô ra CSV/JSON, đẩy lên GitHub, rồi gọi Gemini API phân tích và gửi
+# SỬA 25/11/2026: dời từ 17:00 sang 17:13 (tránh mốc tròn giờ, GitHub hay quá tải và chạy trễ).
+# Script này TÁCH BIỆT HOÀN TOÀN với stock_bot.yml (bot phân tích + gửi Telegram lúc 14:07 và
+# 16:37) — chỉ xuất dữ liệu thô ra CSV/JSON, đẩy lên GitHub, rồi gọi Gemini API phân tích và gửi
 # kết quả đó qua Telegram (KHÔNG phải báo cáo kỹ thuật RSI/MACD như bot chính).
 # SỬA 22/11/2026: thêm TZ=Asia/Ho_Chi_Minh để giờ in trong tin nhắn/file là giờ Việt Nam
 # (trước đó máy GitHub dùng giờ UTC nên lệch 7 tiếng).
 on:
   schedule:
-    - cron: "0 10 * * 1-5"
+    - cron: "13 10 * * 1-5"
   # Cho phép bấm nút "Run workflow" trên GitHub để chạy thủ công bất kỳ lúc nào.
   workflow_dispatch:
 
